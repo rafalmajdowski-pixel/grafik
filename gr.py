@@ -1,13 +1,25 @@
 from datetime import datetime, timedelta
 import io
 import math
-import openpyxl
-from openpyxl.styles import Alignment, Border, PatternFill, Side, Font
 import pandas as pd
-import pulp
 import streamlit as st
 
 st.set_page_config(page_title="Optymalizator Grafiku Magazynu", layout="wide")
+
+try:
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+except ImportError:
+    st.error(
+        "❌ Brakuje biblioteki 'openpyxl'. Upewnij się, że dodałeś 'openpyxl' do pliku requirements.txt na GitHubie!"
+    )
+
+try:
+    import pulp
+except ImportError:
+    st.error(
+        "❌ Brakuje biblioteki 'pulp'. Upewnij się, że dodałeś 'pulp' do pliku requirements.txt na GitHubie!"
+    )
 
 st.title("📦 Optymalizator Grafiku Magazynu")
 
@@ -19,7 +31,7 @@ is_nocny = typ_magazynu == "Nocny"
 
 godzina_otwarcia_ds = 6.0
 godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
-max_godzina_zamowien = 25 if is_nocny else 23       # 25h = 01:00 w nocy
+max_godzina_zamowien = 25 if is_nocny else 23  # 25h = 01:00 w nocy
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -42,7 +54,7 @@ MAPA_DNI = {
 st.header("1. Wybierz okres grafiku")
 okres_grafiku = st.date_input(
     "Wskaż zakres od - do:",
-    value=(datetime.now().date(), datetime.now().date() + timedelta(days=6)),
+    value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
 )
 
 if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
@@ -155,7 +167,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU DLA DS ---
+# --- 4. GENEROWANIE GRAFIKU Z WYRÓWNYWANIEM ETATÓW I BLOKADĄ PRZERW ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -195,7 +207,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-            srednia_godzin_na_glowe = total_required_hours / len(pracownicy)
             dev_plus = pulp.LpVariable.dicts(
                 "dev_plus", pracownicy, lowBound=0, cat="Continuous"
             )
@@ -205,19 +216,36 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
 
+            # --- DYNAMICZNE WYLICZANIE DNI DOSTĘPNOŚCI DLA PRACOWNIKA ---
             for p in pracownicy:
+                dni_absencji = 0
+                for d in dni_zakresu:
+                    for u in st.session_state.urlopy_list:
+                        if u["Pracownik"] == p and u["Od"] <= d <= u["Do"]:
+                            dni_absencji += 1
+                            break
+
+                dni_dostepne = max(1, len(dni_zakresu) - dni_absencji)
+                proporcja_dostepnosci = dni_dostepne / len(dni_zakresu)
+                target_p = (
+                    total_required_hours / len(pracownicy)
+                ) * proporcja_dostepnosci
+
                 suma_h_p = pulp.lpSum(
                     y[p, d, s, l] * l
                     for d in dni_zakresu
                     for s, l in prawidlowe_zmiany
                 )
-                model += (
-                    suma_h_p + dev_minus[p] - dev_plus[p] == srednia_godzin_na_glowe
-                )
+
+                # Różnica w etacie max +/- 10h od celu pracownika (czyli max 20h różnicy między pełnymi etatami)
+                model += suma_h_p <= target_p + 10.0
+                model += suma_h_p >= target_p - 10.0
+                model += suma_h_p + dev_minus[p] - dev_plus[p] == target_p
 
                 for idx_d, d in enumerate(dni_zakresu):
                     model += (
-                        pulp.lpSum(y[p, d, s, l] for s, l in prawidlowe_zmiany) <= 1
+                        pulp.lpSum(y[p, d, s, l] for s, l in prawidlowe_zmiany)
+                        <= 1
                     )
 
                     for u in st.session_state.urlopy_list:
@@ -225,6 +253,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                             for s, l in prawidlowe_zmiany:
                                 model += y[p, d, s, l] == 0
 
+                    # 12H ODPOCZYNKU
                     if idx_d < len(dni_zakresu) - 1:
                         d_next = dni_zakresu[idx_d + 1]
                         for s1, l1 in prawidlowe_zmiany:
@@ -232,7 +261,27 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                             for s2, l2 in prawidlowe_zmiany:
                                 start_dzien2 = s2 + 24.0
                                 if (start_dzien2 - koniec_dzien1) < 12.0:
-                                    model += y[p, d, s1, l1] + y[p, d_next, s2, l2] <= 1
+                                    model += (
+                                        y[p, d, s1, l1] + y[p, d_next, s2, l2]
+                                        <= 1
+                                    )
+
+                # --- WYKLUCZANIE DŁUGICH DZIUR (MAX 3 DNI WOLNEGO Z RZĘDU) ---
+                for idx_d in range(len(dni_zakresu) - 3):
+                    window = [dni_zakresu[idx_d + i] for i in range(4)]
+                    has_vacation = any(
+                        u["Pracownik"] == p and u["Od"] <= window[3] and u["Do"] >= window[0]
+                        for u in st.session_state.urlopy_list
+                    )
+                    if not has_vacation:
+                        model += (
+                            pulp.lpSum(
+                                y[p, d_w, s, l]
+                                for d_w in window
+                                for s, l in prawidlowe_zmiany
+                            )
+                            >= 1
+                        )
 
             for d in dni_zakresu:
                 model += (
@@ -269,9 +318,8 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             if pulp.LpStatus[status] != "Optimal":
                 st.error(
-                    "❌ Nie można wygenerować grafiku! Zbiór reguł (minimum 12h odpoczynku, urlopy, godziny DS) "
-                    "oraz zapotrzebowanie z Lookera przekraczają możliwości dostępnej liczby pracowników. "
-                    "Dodaj więcej pracowników na zlecenie lub zmień zakres urlopów."
+                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU! Zasady (12h odpoczynku, brak 4 dni wolnego z rzędu, wyrównywanie etatów) "
+                    "oraz urlopy uniemożliwiają wyliczenie optymalnego grafiku. Dodaj więcej pracowników na zlecenie."
                 )
             else:
                 wb = openpyxl.Workbook()
@@ -330,8 +378,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
                 col_idx = 2
                 for p in pracownicy:
-                    col_start_letter = openpyxl.utils.get_column_letter(col_idx)
-                    col_end_letter = openpyxl.utils.get_column_letter(col_idx + 2)
+                    col_start_letter = openpyxl.utils.get_column_letter(
+                        col_idx
+                    )
+                    col_end_letter = openpyxl.utils.get_column_letter(
+                        col_idx + 2
+                    )
 
                     ws.merge_cells(f"{col_start_letter}1:{col_end_letter}1")
                     cell_p = ws[f"{col_start_letter}1"]
@@ -415,8 +467,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 grand_total_hours = 0.0
                 col_idx = 2
                 for p in pracownicy:
-                    col_start_letter = openpyxl.utils.get_column_letter(col_idx)
-                    col_end_letter = openpyxl.utils.get_column_letter(col_idx + 2)
+                    col_start_letter = openpyxl.utils.get_column_letter(
+                        col_idx
+                    )
+                    col_end_letter = openpyxl.utils.get_column_letter(
+                        col_idx + 2
+                    )
 
                     ws.merge_cells(
                         f"{col_start_letter}{row_idx}:{col_end_letter}{row_idx}"
@@ -430,7 +486,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     grand_total_hours += godziny_pracownikow[p]
 
                     for i in range(3):
-                        ws.cell(row=row_idx, column=col_idx + i).border = thin_border
+                        ws.cell(row=row_idx, column=col_idx + i).border = (
+                            thin_border
+                        )
 
                     col_idx += 3
 
@@ -446,7 +504,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 last_col_letter = openpyxl.utils.get_column_letter(col_idx - 1)
                 ws.merge_cells(f"B{row_idx}:{last_col_letter}{row_idx}")
                 cell_grand_val = ws[f"B{row_idx}"]
-                cell_grand_val.value = f"{round(grand_total_hours, 1)} Roboczogodzin (RH)"
+                cell_grand_val.value = (
+                    f"{round(grand_total_hours, 1)} Roboczogodzin (RH)"
+                )
                 cell_grand_val.font = Font(
                     name="Calibri", size=11, bold=True, color="FFFFFF"
                 )
@@ -465,14 +525,14 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 wb.save(buffer)
 
                 st.success(
-                    "✅ Grafik wygenerowany pomyślnie! Zachowano wymagane 12h odpoczynku między zmianami."
+                    "✅ Grafik miesięczny wygenerowany pomyślnie! Różnice w etacie ograniczone do max 20h, uwzględniono proporcje urlopowe i brak długich przerw."
                 )
 
                 st.download_button(
                     label="📥 Pobierz Grafik (.xlsx)",
                     data=buffer.getvalue(),
-                    file_name="grafik_magazyn_12h_rest.xlsx",
+                    file_name="grafik_magazyn_zbalansowany.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-        except Exception as err:
-            st.error(f"Wystąpił błąd podczas generowania: {err}")
+        except Exception as e:
+            st.error(f"⚠️ Wystąpił szczegółowy błąd: {e}")
