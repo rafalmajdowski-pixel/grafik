@@ -151,7 +151,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU (STRICT LOOKER DEMAND) ---
+# --- 4. GENEROWANIE GRAFIKU (EQUAL HOURS & STRICT DEMAND) ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -160,16 +160,16 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         st.error("Proszę wpisać listę pracowników!")
     else:
         wymagani_pracownicy_h = {}
+        total_required_hours = 0
         for d in dni_zakresu:
             d_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             wymagani_pracownicy_h[d] = {}
             for h in range(24):
                 sr_zam = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
-                # DOKŁADNE ZAPOTRZEBOWANIE: zamowienia / cel
                 potrzeba_osob = math.ceil(sr_zam / cel_efektywnosci)
                 wymagani_pracownicy_h[d][h] = potrzeba_osob
+                total_required_hours += potrzeba_osob
 
-        # MODEL OPTYMALIZUJĄCY MINIMALIZACJĘ ROBOCZOGODZIN
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
         prawidlowe_zmiany = []
@@ -191,15 +191,30 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-        # CEL: MINIMALIZUJEMY CAŁKOWITĄ LICZBĘ PRZEPRACOWANYCH GODZIN
-        model += pulp.lpSum(
-            y[p, d, s, l] * l
-            for p in pracownicy
-            for d in dni_zakresu
-            for s, l in prawidlowe_zmiany
+        # Zmienne równomiernego podziału godzin
+        srednia_godzin_na_glowe = total_required_hours / len(pracownicy)
+        dev_plus = pulp.LpVariable.dicts(
+            "dev_plus", pracownicy, lowBound=0, cat="Continuous"
+        )
+        dev_minus = pulp.LpVariable.dicts(
+            "dev_minus", pracownicy, lowBound=0, cat="Continuous"
         )
 
+        # FUNKCJA CELU: Minimalizujemy odchylenia od sprawiedliwej średniej godzin
+        model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
+
         for p in pracownicy:
+            # Suma godzin danego pracownika
+            suma_h_p = pulp.lpSum(
+                y[p, d, s, l] * l
+                for d in dni_zakresu
+                for s, l in prawidlowe_zmiany
+            )
+            # Dążenie do średniej tygodniowej
+            model += (
+                suma_h_p + dev_minus[p] - dev_plus[p] == srednia_godzin_na_glowe
+            )
+
             for d in dni_zakresu:
                 # Max 1 zmiana dziennie
                 model += (
@@ -211,17 +226,20 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         for s, l in prawidlowe_zmiany:
                             model += y[p, d, s, l] == 0
 
-        # POKRYCIE GODZINOWE ZAPOTRZEBOWANIA DLA ZAMÓWIEŃ Z LOOKERA
+        # POKRYCIE ZAPOTRZEBOWANIA DLA DANYCH Z LOOKERA
         for d in dni_zakresu:
             for h in range(24):
                 potrzebni = wymagani_pracownicy_h[d][h]
-                pracujacy_w_godzinie = []
-                for p in pracownicy:
-                    for s, l in prawidlowe_zmiany:
-                        if s <= h < s + l or (s + l > 24 and h < (s + l) % 24):
-                            pracujacy_w_godzinie.append(y[p, d, s, l])
+                if potrzebni > 0:
+                    pracujacy_w_godzinie = []
+                    for p in pracownicy:
+                        for s, l in prawidlowe_zmiany:
+                            if s <= h < s + l or (
+                                s + l > 24 and h < (s + l) % 24
+                            ):
+                                pracujacy_w_godzinie.append(y[p, d, s, l])
 
-                model += pulp.lpSum(pracujacy_w_godzinie) >= potrzebni
+                    model += pulp.lpSum(pracujacy_w_godzinie) >= potrzebni
 
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
@@ -256,7 +274,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         df_res = pd.DataFrame(tabela)
 
         st.success(
-            "✅ Grafik wygenerowany optymalnie pod czysty wolumen z Lookera!"
+            "✅ Grafik wygenerowany pomyślnie z równomiernym rozdzieleniem godzin!"
         )
         st.dataframe(df_res, use_container_width=True)
 
