@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 import io
 import math
+import openpyxl
+from openpyxl.styles import Alignment, Border, PatternFill, Side, Font
 import pandas as pd
 import pulp
 import streamlit as st
@@ -15,9 +17,8 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
-# TWARDE RAMY PRACY MAGAZYNU (DS)
-godzina_otwarcia_ds = 6.0       # Twardy start o 06:00
-godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # Twardy koniec o 23:30 (lub 01:30)
+godzina_otwarcia_ds = 6.0
+godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -39,7 +40,7 @@ MAPA_DNI = {
 # --- 1. ZAKRES DAT DLA GRAFIKU ---
 st.header("1. Wybierz okres grafiku")
 okres_grafiku = st.date_input(
-    "Wskaż zakres od - do (kliknij początek i koniec w kalendarzu):",
+    "Wskaż zakres od - do:",
     value=(datetime.now().date(), datetime.now().date() + timedelta(days=6)),
 )
 
@@ -53,9 +54,9 @@ else:
     dni_zakresu = [okres_grafiku[0]]
 
 # --- 2. ANALIZA GODZINOWA Z LOOKERA ---
-st.header("2. Wgraj raport z Lookera (tabela przestawna)")
+st.header("2. Wgraj raport z Lookera")
 uploaded_file = st.file_uploader(
-    "Wybierz plik CSV lub Excel pobrany z Lookera", type=["csv", "xlsx"]
+    "Wybierz plik CSV lub Excel z Lookera", type=["csv", "xlsx"]
 )
 
 srednie_godzinowe = {}
@@ -112,16 +113,16 @@ if uploaded_file:
                 sr_h = sum(vals) / len(vals) if vals else 0
                 srednie_godzinowe[d_nazwa][h] = sr_h
 
-        st.success("✅ Dane z Lookera zostały pomyślnie przetworzone.")
+        st.success("✅ Dane z Lookera przetworzone pomyślnie.")
 
     except Exception as e:
         st.error(f"Błąd odczytu pliku: {e}")
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
-st.header("3. Dostępni Pracownicy (Zleceniobiorcy)")
+st.header("3. Dostępni Pracownicy")
 pracownicy_input = st.text_area(
     "Lista pracowników na zlecenie (każdy w nowej linii):",
-    "Jan Kowalski\nPiotr Nowak\nAnna Wiśniewska\nTomasz Zieliński\nMichał Lewandowski",
+    "Aval01204VasinA\nAval01209KushnY\nAvalZhukoD\nDive01202VitalD\nEter01203SavchV\nEterZaichI",
 )
 pracownicy = [
     p.strip() for p in pracownicy_input.split("\n") if p.strip() != ""
@@ -130,7 +131,7 @@ pracownicy = [
 if "urlopy_list" not in st.session_state:
     st.session_state.urlopy_list = []
 
-st.subheader("Niedostępność pracownika (urlop / brak dyspozycyjności):")
+st.subheader("Niedostępność pracownika:")
 col_p, col_u1, col_u2, col_btn = st.columns([2, 2, 2, 1])
 
 with col_p:
@@ -153,7 +154,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU DLA RAM DS ---
+# --- 4. GENEROWANIE GRAFIKU DLA WZORU EXCELA ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -174,10 +175,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
-        # GENERUJEMY ZMIANY Z WYMUSZENIEM KRAWĘDZI DLA DS (06:00 ORAZ 23:30 / 01:30)
         prawidlowe_zmiany = []
-        
-        # Starty z krokiem 0.5h od 06:00
         starty = [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]
         dlugosci = [float(l) for l in range(min_zmiana, max_zmiana + 1)]
 
@@ -225,9 +223,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         for s, l in prawidlowe_zmiany:
                             model += y[p, d, s, l] == 0
 
-        # TWARDE OGRANICZENIA NA KRAWĘDZIE PRACY DS
         for d in dni_zakresu:
-            # 1. Przynajmniej 1 osoba musi rozpocząć zmianę o 06:00 (Otwarcie magazynu)
             model += (
                 pulp.lpSum(
                     y[p, d, 6.0, l]
@@ -237,8 +233,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 )
                 >= 1
             )
-
-            # 2. Przynajmniej 1 osoba musi kończyć zmianę dokładnie o godzinie zamknięcia DS (23:30 / 01:30)
             model += (
                 pulp.lpSum(
                     y[p, d, s, l]
@@ -249,7 +243,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 >= 1
             )
 
-            # Pokrycie spływu dla pozostałych godzin
             for h in range(24):
                 potrzebni = wymagani_pracownicy_h[d][h]
                 if potrzebni > 0:
@@ -263,55 +256,149 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-        tabela = []
-        godziny_pracownikow = {p: 0 for p in pracownicy}
+        # --- TWORZENIE DOKŁADNEGO PLIKU EXCEL DLA WZORU ---
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Grafik"
+
+        # Style
+        font_bold = Font(name="Calibri", size=10, bold=True)
+        font_regular = Font(name="Calibri", size=10)
+        align_center = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        thin_border = Border(
+            left=Side(style="thin", color="D3D3D3"),
+            right=Side(style="thin", color="D3D3D3"),
+            top=Side(style="thin", color="D3D3D3"),
+            bottom=Side(style="thin", color="D3D3D3"),
+        )
+
+        fill_header_main = PatternFill(
+            start_color="8EA9DB", end_color="8EA9DB", fill_type="solid"
+        )
+        fill_header_sub = PatternFill(
+            start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
+        )
+        fill_date_weekend = PatternFill(
+            start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"
+        )
+        fill_date_weekday = PatternFill(
+            start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
+        )
+
+        fill_shift_morning = PatternFill(
+            start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"
+        )  # Żółty
+        fill_shift_afternoon = PatternFill(
+            start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"
+        )  # Zielonkawy/Fiolet
+
+        # Nagłówek A1: pl-waw-12
+        ws.merge_cells("A1:A2")
+        ws["A1"] = "pl-waw-12"
+        ws["A1"].font = font_bold
+        ws["A1"].fill = fill_header_main
+        ws["A1"].alignment = align_center
 
         def format_time(h_float):
             h_int = int(h_float) % 24
             m_int = int(round((h_float - int(h_float)) * 60))
             return f"{h_int:02d}:{m_int:02d}"
 
-        for d in dni_zakresu:
-            dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
-            row = {"Data": d.strftime("%Y-%m-%d"), "Dzień": dzien_nazwa}
+        # Ustawianie nagłówków pracowników (co 3 kolumny)
+        col_idx = 2
+        for p in pracownicy:
+            col_start_letter = openpyxl.utils.get_column_letter(col_idx)
+            col_end_letter = openpyxl.utils.get_column_letter(col_idx + 2)
 
+            # Scalenie dla nazwy pracownika w wierszu 1
+            ws.merge_cells(f"{col_start_letter}1:{col_end_letter}1")
+            cell_p = ws[f"{col_start_letter}1"]
+            cell_p.value = p
+            cell_p.font = font_bold
+            cell_p.fill = fill_header_main
+            cell_p.alignment = align_center
+
+            # Pod-nagłówki: Start, Koniec, Suma w wierszu 2
+            sub_headers = ["Start", "Koniec", "Suma"]
+            for i, sh in enumerate(sub_headers):
+                cell_sh = ws.cell(row=2, column=col_idx + i)
+                cell_sh.value = sh
+                cell_sh.font = font_bold
+                cell_sh.fill = fill_header_sub
+                cell_sh.alignment = align_center
+                cell_sh.border = thin_border
+
+            col_idx += 3
+
+        # Wypełnianie danymi dni
+        row_idx = 3
+        for d in dni_zakresu:
+            cell_date = ws.cell(row=row_idx, column=1)
+            cell_date.value = d.strftime("%d/%m/%Y")
+            cell_date.font = font_regular
+            cell_date.alignment = align_center
+            cell_date.border = thin_border
+
+            if d.weekday() in [5, 6]:  # Sobota / Niedziela
+                cell_date.fill = fill_date_weekend
+            else:
+                cell_date.fill = fill_date_weekday
+
+            col_idx = 2
             for p in pracownicy:
                 assigned = False
                 for s, l in prawidlowe_zmiany:
                     if y[p, d, s, l].varValue == 1:
-                        s_str = format_time(s)
-                        e_str = format_time(s + l)
-                        l_str = f"{int(l)}h" if l.is_integer() else f"{l}h"
-                        row[p] = f"{s_str} - {e_str} ({l_str})"
-                        godziny_pracownikow[p] += l
+                        c_start = ws.cell(row=row_idx, column=col_idx)
+                        c_end = ws.cell(row=row_idx, column=col_idx + 1)
+                        c_sum = ws.cell(row=row_idx, column=col_idx + 2)
+
+                        c_start.value = format_time(s)
+                        c_end.value = format_time(s + l)
+                        c_sum.value = round(l, 1)
+
+                        # Dobór koloru wypełnienia dla zmiany
+                        fill_color = (
+                            fill_shift_morning
+                            if s <= 10.0
+                            else fill_shift_afternoon
+                        )
+
+                        for cell in [c_start, c_end, c_sum]:
+                            cell.font = font_regular
+                            cell.alignment = align_center
+                            cell.border = thin_border
+                            cell.fill = fill_color
+
                         assigned = True
                         break
+
                 if not assigned:
-                    row[p] = "OFF"
+                    # Dzień wolny = puste komórki z ramką
+                    for i in range(3):
+                        cell = ws.cell(row=row_idx, column=col_idx + i)
+                        cell.border = thin_border
 
-            tabela.append(row)
+                col_idx += 3
 
-        row_sum = {
-            "Data": "ŁĄCZNIE",
-            "Dzień": "-",
-            **{p: f"{round(godziny_pracownikow[p], 1)}h" for p in pracownicy},
-        }
+            row_idx += 1
 
-        tabela.append(row_sum)
-        df_res = pd.DataFrame(tabela)
-
-        st.success(
-            "✅ Grafik wygenerowany pomyślnie! Zmiany rygorystycznie rozpoczynają się od 06:00 i kończą o 23:30 (lub 01:30)."
-        )
-        st.dataframe(df_res, use_container_width=True)
+        # Ustawianie optymalnych szerokości kolumn
+        ws.column_dimensions["A"].width = 14
+        for c in range(2, col_idx):
+            col_letter = openpyxl.utils.get_column_letter(c)
+            ws.column_dimensions[col_letter].width = 9
 
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_res.to_excel(writer, sheet_name="Grafik Pracy", index=False)
+        wb.save(buffer)
+
+        st.success("✅ Grafik wygenerowany dokładnie według wzoru Excela!")
 
         st.download_button(
-            label="📥 Pobierz Grafik (.xlsx)",
+            label="📥 Pobierz Grafik zgodny ze wzorem (.xlsx)",
             data=buffer.getvalue(),
-            file_name="grafik_magazyn.xlsx",
+            file_name="grafik_magazyn_wzor.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
