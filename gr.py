@@ -14,27 +14,25 @@ st.title("📦 Optymalizator Grafiku Magazynu")
 st.sidebar.header("⚙️ Parametry Magazynu")
 
 typ_magazynu = st.sidebar.selectbox(
-    "Typ magazynu / Ramki czasowe",
-    [
-        "Standardowy (Praca: 06:00-23:30 | Zamówienia: 07:00-23:00)",
-        "Nocny (Praca: 06:00-01:30 | Zamówienia: 07:00-01:00)",
-    ],
+    "Typ magazynu",
+    ["Standardowy", "Nocny"],
 )
 
-is_nocny = "Nocny" in typ_magazynu
+is_nocny = typ_magazynu == "Nocny"
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
 )
 
-min_zmiana = st.sidebar.slider("Minimalna długość zmiany (h)", 4, 8, 6)
-max_zmiana = st.sidebar.slider("Maksymalna długość zmiany (h)", 8, 12, 12)
+# Sztywne zakresy pracy zaszyte w algorytmie
+min_zmiana = 6
+max_zmiana = 12
 
 min_obsada_otwarcie = st.sidebar.number_input(
-    "Min. obsada na otwarciu (06:00)", min_value=1, value=1
+    "Min. obsada na otwarciu (osoby)", min_value=1, value=1
 )
 min_obsada_zamkniecie = st.sidebar.number_input(
-    "Min. obsada na zamknięciu (23:30 / 01:30)", min_value=1, value=1
+    "Min. obsada na zamknięciu (osoby)", min_value=1, value=1
 )
 
 MAPA_DNI = {
@@ -72,40 +70,53 @@ uploaded_file = st.file_uploader(
 
 srednie_wolumeny = {}
 if uploaded_file:
-    df_looker = (
-        pd.read_csv(uploaded_file)
-        if uploaded_file.name.endswith(".csv")
-        else pd.read_excel(uploaded_file)
-    )
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df_looker = pd.read_csv(uploaded_file)
+        else:
+            df_looker = pd.read_excel(uploaded_file)
 
-    cols = df_looker.columns.tolist()
-    col_data = st.selectbox("Wybierz kolumnę z Datą:", cols, index=0)
+        cols = df_looker.columns.tolist()
+        col_data = st.selectbox("Wybierz kolumnę z Datą:", cols, index=0)
 
-    num_cols = df_looker.select_dtypes(include=["number"]).columns.tolist()
-    default_vol_idx = cols.index(num_cols[0]) if num_cols else 1
-    col_wolumen = st.selectbox(
-        "Wybierz kolumnę z Wolumenem (liczba zamówień z aplikacji):",
-        cols,
-        index=default_vol_idx,
-    )
+        # Bezpieczne wyznaczanie kolumn czysto numerycznych
+        num_cols = df_looker.select_dtypes(include=["number"]).columns.tolist()
+        default_idx = (
+            cols.index(num_cols[0]) if num_cols and num_cols[0] in cols else 0
+        )
 
-    df_looker["_dt"] = pd.to_datetime(df_looker[col_data], errors="coerce")
-    df_looker["Dzien_Nazwa"] = (
-        df_looker["_dt"]
-        .dt.day_name()
-        .map(MAPA_DNI)
-        .fillna(df_looker[col_data])
-    )
+        col_wolumen = st.selectbox(
+            "Wybierz kolumnę z Wolumenem (liczba zamówień):",
+            cols,
+            index=default_idx,
+        )
 
-    srednie_wolumeny = (
-        df_looker.groupby("Dzien_Nazwa")[col_wolumen].mean().to_dict()
-    )
+        # Konwersja daty i danych liczbowych
+        df_looker["_dt"] = pd.to_datetime(df_looker[col_data], errors="coerce")
+        df_looker["Dzien_Nazwa"] = (
+            df_looker["_dt"]
+            .dt.day_name()
+            .map(MAPA_DNI)
+            .fillna(df_looker[col_data].astype(str))
+        )
+        df_looker["_wolumen_num"] = pd.to_numeric(
+            df_looker[col_wolumen], errors="coerce"
+        ).fillna(0)
+
+        srednie_wolumeny = (
+            df_looker.groupby("Dzien_Nazwa")["_wolumen_num"].mean().to_dict()
+        )
+        st.success("✅ Dane z Lookera zostały przetworzone pomyślnie.")
+    except Exception as e:
+        st.error(
+            f"Błąd podczas odczytu pliku: {e}. Sprawdź, czy wybrano poprawną kolumnę z wolumenem."
+        )
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
 st.header("3. Zespół i Wolne / Urlopy")
 pracownicy_input = st.text_area(
     "Lista pracowników (każdy w nowej linii):",
-    "Jan Kowalski\nPiotr Nowak\nAnna Wiśniewska\nTomasz Zieliński\nMichał Lewandowski",
+    "Jan Kowalski\nPiotr Nowak\nAnna Wiśniewska",
 )
 pracownicy = [
     p.strip() for p in pracownicy_input.split("\n") if p.strip() != ""
@@ -145,6 +156,42 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
     elif not pracownicy:
         st.error("Proszę wpisać listę pracowników!")
     else:
+        # WERYFIKACJA MOŻLIWOŚCI KADROWYCH PRZED PU-LP
+        brakujace_godziny = {}
+        for d in dni_zakresu:
+            dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
+            wol = srednie_wolumeny.get(dzien_nazwa, 0)
+            wymagane_rh = wol / cel_efektywnosci
+
+            # Dostępni pracownicy w dany dzień (którzy nie mają urlopu)
+            dostepni_dzisiaj = [
+                p
+                for p in pracownicy
+                if not any(
+                    u["Pracownik"] == p and u["Od"] <= d <= u["Do"]
+                    for u in st.session_state.urlopy_list
+                )
+            ]
+
+            max_mozliwe_rh = len(dostepni_dzisiaj) * max_zmiana
+
+            if max_mozliwe_rh < wymagane_rh:
+                roznica = round(wymagane_rh - max_mozliwe_rh, 1)
+                brakujace_godziny[f"{d.strftime('%Y-%m-%d')} ({dzien_nazwa})"] = (
+                    roznica,
+                    len(dostepni_dzisiaj),
+                )
+
+        if brakujace_godziny:
+            st.warning("⚠️ **ALERT BRAKU OBSADY W ZESPOLE!**")
+            for dzien_key, (roznica, dostepni) in brakujace_godziny.items():
+                st.error(
+                    f"Dzień **{dzien_key}**: Dostępnych osób: **{dostepni}**. "
+                    f"Brakuje co najmniej **{roznica} roboczogodzin (RH)**, aby obsłużyć zamówienia z Lookera! "
+                    f"Dodaj pracowników lub zwiększ ich efektywność."
+                )
+
+        # MODEL OPTYMALIZACYJNY
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
         pracuje = pulp.LpVariable.dicts(
@@ -198,14 +245,27 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             model += (
                 pulp.lpSum(godziny[p, d] for p in pracownicy) >= wymagane_rh
             )
-            model += (
-                pulp.lpSum(na_otwarciu[p, d] for p in pracownicy)
-                >= min_obsada_otwarcie
+
+            # Pokrycie min obsady, jeśli są dostępni pracownicy
+            dostepni_dzisiaj = sum(
+                1
+                for p in pracownicy
+                if not any(
+                    u["Pracownik"] == p and u["Od"] <= d <= u["Do"]
+                    for u in st.session_state.urlopy_list
+                )
             )
-            model += (
-                pulp.lpSum(na_zamknieciu[p, d] for p in pracownicy)
-                >= min_obsada_zamkniecie
-            )
+
+            if dostepni_dzisiaj >= min_obsada_otwarcie:
+                model += (
+                    pulp.lpSum(na_otwarciu[p, d] for p in pracownicy)
+                    >= min_obsada_otwarcie
+                )
+            if dostepni_dzisiaj >= min_obsada_zamkniecie:
+                model += (
+                    pulp.lpSum(na_zamknieciu[p, d] for p in pracownicy)
+                    >= min_obsada_zamkniecie
+                )
 
         for p in pracownicy:
             dni_wolne_count = sum(
@@ -223,15 +283,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         tabela = []
         godziny_pracownikow = {p: 0 for p in pracownicy}
-
         godzina_zamkniecia_str = "01:30" if is_nocny else "23:30"
 
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             row = {"Data": d.strftime("%Y-%m-%d"), "Dzień": dzien_nazwa}
             obsada_dnia_rh = 0
-
-            # Układanie startu zmian w zależności od obsady
             kolejne_godziny_startu = 6
 
             for p in pracownicy:
