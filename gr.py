@@ -15,7 +15,9 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
-godzina_otwarcia = 18 if is_nocny else 6
+# TWARDE RAMY CZASOWE MAGAZYNU (DS)
+godzina_otwarcia_ds = 6  # Zawsze 06:00
+godzina_zamkniecia_ds = 1.5 if is_nocny else 23.5  # 01:30 lub 23:30
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -151,7 +153,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU (EQUAL HOURS & STRICT DEMAND) ---
+# --- 4. GENEROWANIE GRAFIKU ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -172,15 +174,16 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
+        # GENEROWANIE ZMIAN OD G. 06:00 Z ZACHOWANIEM LIMITU PRACY DS
         prawidlowe_zmiany = []
-        for s in range(godzina_otwarcia, 24):
+        for s in range(godzina_otwarcia_ds, 24):
             for l in range(min_zmiana, max_zmiana + 1):
                 koniec_float = s + l
                 if not is_nocny and koniec_float <= 23.5:
                     prawidlowe_zmiany.append((s, l))
                 elif is_nocny:
                     koniec_mod = koniec_float % 24
-                    if s >= 18 and (koniec_float <= 25.5 or koniec_mod <= 1.5):
+                    if s >= 6 and (koniec_float <= 25.5 or koniec_mod <= 1.5):
                         prawidlowe_zmiany.append((s, l))
 
         zmienne_zmian = []
@@ -191,7 +194,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-        # Zmienne równomiernego podziału godzin
+        # RÓWNOMIERNY PODZIAŁ GODZIN POMIĘDZY ZLECENIOBIORCÓW
         srednia_godzin_na_glowe = total_required_hours / len(pracownicy)
         dev_plus = pulp.LpVariable.dicts(
             "dev_plus", pracownicy, lowBound=0, cat="Continuous"
@@ -200,23 +203,19 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             "dev_minus", pracownicy, lowBound=0, cat="Continuous"
         )
 
-        # FUNKCJA CELU: Minimalizujemy odchylenia od sprawiedliwej średniej godzin
         model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
 
         for p in pracownicy:
-            # Suma godzin danego pracownika
             suma_h_p = pulp.lpSum(
                 y[p, d, s, l] * l
                 for d in dni_zakresu
                 for s, l in prawidlowe_zmiany
             )
-            # Dążenie do średniej tygodniowej
             model += (
                 suma_h_p + dev_minus[p] - dev_plus[p] == srednia_godzin_na_glowe
             )
 
             for d in dni_zakresu:
-                # Max 1 zmiana dziennie
                 model += (
                     pulp.lpSum(y[p, d, s, l] for s, l in prawidlowe_zmiany) <= 1
                 )
@@ -226,7 +225,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         for s, l in prawidlowe_zmiany:
                             model += y[p, d, s, l] == 0
 
-        # POKRYCIE ZAPOTRZEBOWANIA DLA DANYCH Z LOOKERA
+        # POKRYCIE SPŁYWU ZAMÓWIEŃ Z LOOKERA
         for d in dni_zakresu:
             for h in range(24):
                 potrzebni = wymagani_pracownicy_h[d][h]
@@ -254,8 +253,10 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 assigned = False
                 for s, l in prawidlowe_zmiany:
                     if y[p, d, s, l].varValue == 1:
-                        end_h = (s + l) % 24
-                        row[p] = f"{s:02d}:00 - {end_h:02d}:00 ({l}h)"
+                        end_float = s + l
+                        end_h = int(end_float) % 24
+                        end_m = int((end_float - int(end_float)) * 60)
+                        row[p] = f"{s:02d}:00 - {end_h:02d}:{end_m:02d} ({l}h)"
                         godziny_pracownikow[p] += l
                         assigned = True
                         break
@@ -274,7 +275,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         df_res = pd.DataFrame(tabela)
 
         st.success(
-            "✅ Grafik wygenerowany pomyślnie z równomiernym rozdzieleniem godzin!"
+            "✅ Grafik wygenerowany pomyślnie z zachowaniem ram czasowych magazynu!"
         )
         st.dataframe(df_res, use_container_width=True)
 
