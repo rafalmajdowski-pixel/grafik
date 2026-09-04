@@ -15,11 +15,9 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
-# TWARDE RAMY CZASOWE
-# Standard: Praca DS 06:00 - 23:30 (zamówienia 07:00 - 23:00)
-# Nocny: Praca DS 06:00 - 01:30 (zamówienia 07:00 - 01:00)
-godzina_otwarcia_ds = 6.0
-godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
+# TWARDE RAMY PRACY MAGAZYNU (DS)
+godzina_otwarcia_ds = 6.0       # Twardy start o 06:00
+godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # Twardy koniec o 23:30 (lub 01:30)
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -155,7 +153,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU Z PRECYZYJNYMI GODZINAMI DS ---
+# --- 4. GENEROWANIE GRAFIKU DLA RAM DS ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -176,9 +174,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
-        # GENEROWANIE ZMIAN Z KROKIEM 30 MINUT DO DOKŁADNEJ GODZINY ZAMKNIĘCIA DS
+        # GENERUJEMY ZMIANY Z WYMUSZENIEM KRAWĘDZI DLA DS (06:00 ORAZ 23:30 / 01:30)
         prawidlowe_zmiany = []
-        starty = [6.0 + 0.5 * i for i in range(int((22.0 - 6.0) * 2) + 1)]
+        
+        # Starty z krokiem 0.5h od 06:00
+        starty = [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]
         dlugosci = [float(l) for l in range(min_zmiana, max_zmiana + 1)]
 
         for s in starty:
@@ -195,7 +195,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-        # RÓWNOMIERNY PODZIAŁ GODZIN ZLECENIOBIORCÓW
         srednia_godzin_na_glowe = total_required_hours / len(pracownicy)
         dev_plus = pulp.LpVariable.dicts(
             "dev_plus", pracownicy, lowBound=0, cat="Continuous"
@@ -226,8 +225,31 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         for s, l in prawidlowe_zmiany:
                             model += y[p, d, s, l] == 0
 
-        # POKRYCIE SPŁYWU ZAMÓWIEŃ Z LOOKERA
+        # TWARDE OGRANICZENIA NA KRAWĘDZIE PRACY DS
         for d in dni_zakresu:
+            # 1. Przynajmniej 1 osoba musi rozpocząć zmianę o 06:00 (Otwarcie magazynu)
+            model += (
+                pulp.lpSum(
+                    y[p, d, 6.0, l]
+                    for p in pracownicy
+                    for s, l in prawidlowe_zmiany
+                    if s == 6.0
+                )
+                >= 1
+            )
+
+            # 2. Przynajmniej 1 osoba musi kończyć zmianę dokładnie o godzinie zamknięcia DS (23:30 / 01:30)
+            model += (
+                pulp.lpSum(
+                    y[p, d, s, l]
+                    for p in pracownicy
+                    for s, l in prawidlowe_zmiany
+                    if s + l == godzina_zamkniecia_ds
+                )
+                >= 1
+            )
+
+            # Pokrycie spływu dla pozostałych godzin
             for h in range(24):
                 potrzebni = wymagani_pracownicy_h[d][h]
                 if potrzebni > 0:
@@ -279,7 +301,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         df_res = pd.DataFrame(tabela)
 
         st.success(
-            "✅ Grafik wygenerowany pomyślnie! Zmiany zamykają się precyzyjnie o 23:30 (lub 01:30)."
+            "✅ Grafik wygenerowany pomyślnie! Zmiany rygorystycznie rozpoczynają się od 06:00 i kończą o 23:30 (lub 01:30)."
         )
         st.dataframe(df_res, use_container_width=True)
 
