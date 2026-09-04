@@ -53,13 +53,12 @@ else:
     dni_zakresu = [okres_grafiku[0]]
 
 # --- 2. ANALIZA GODZINOWA Z LOOKERA ---
-st.header("2. Wgraj raport z Lookera (tabela przestawna godzina/dzień)")
+st.header("2. Wgraj raport z Lookera (tabela przestawna)")
 uploaded_file = st.file_uploader(
     "Wybierz plik CSV lub Excel pobrany z Lookera", type=["csv", "xlsx"]
 )
 
-srednie_godzinowe = {}  # {Dzien_Nazwa: {godzina: srednia_zamowien}}
-srednie_wolumeny_dzienne = {}
+srednie_godzinowe = {}
 
 if uploaded_file:
     try:
@@ -68,7 +67,6 @@ if uploaded_file:
         else:
             df_raw = pd.read_excel(uploaded_file)
 
-        # Identyfikacja kolumny z godzinami (Hour of Day)
         col_hour = None
         for c in df_raw.columns:
             if "hour" in str(c).lower() or "godz" in str(c).lower():
@@ -77,7 +75,6 @@ if uploaded_file:
         if not col_hour:
             col_hour = df_raw.columns[0]
 
-        # Identyfikacja kolumn z datami
         date_cols = {}
         for c in df_raw.columns:
             dt_val = pd.to_datetime(str(c).strip(), errors="coerce")
@@ -89,7 +86,6 @@ if uploaded_file:
                     date_cols[dzien_nazwa] = []
                 date_cols[dzien_nazwa].append(c)
 
-        # Analiza wiersz po wierszu dla każdej godziny
         godziny_data = {
             d: {h: [] for h in range(24)} for d in MAPA_DNI.values()
         }
@@ -109,24 +105,14 @@ if uploaded_file:
                         if pd.notna(val):
                             godziny_data[d_nazwa][h_int].append(val)
 
-        # Wyliczenie średnich godzinowych oraz dziennych
         for d_nazwa in MAPA_DNI.values():
             srednie_godzinowe[d_nazwa] = {}
-            suma_dzienna = 0
             for h in range(24):
                 vals = godziny_data[d_nazwa][h]
                 sr_h = sum(vals) / len(vals) if vals else 0
                 srednie_godzinowe[d_nazwa][h] = sr_h
-                suma_dzienna += sr_h
-            srednie_wolumeny_dzienne[d_nazwa] = suma_dzienna
 
-        st.success(
-            "✅ Pomyślnie przeanalizowano rozkład godzinowy zamówień z Lookera!"
-        )
-
-        with st.expander("🔍 Podgląd średniego zapotrzebowania godzinowego"):
-            df_godz_view = pd.DataFrame(srednie_godzinowe)
-            st.dataframe(df_godz_view.style.highlight_max(axis=0))
+        st.success("✅ Plik z Lookera wczytany poprawnie.")
 
     except Exception as e:
         st.error(f"Błąd odczytu pliku: {e}")
@@ -167,7 +153,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. OPTYMALIZACJA GRAFIKU DLA SZCZYTÓW GODZINOWYCH ---
+# --- 4. GENEROWANIE GRAFIKU ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -175,8 +161,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
     elif not pracownicy:
         st.error("Proszę wpisać listę pracowników!")
     else:
-        # POBIERANIE POTRZEB GODZINOWYCH (ILE OSÓB W DANEJ GODZINIE)
-        # Np. 18 zam / 15 cel = 1.2 -> wymagane min 2 osoby w tej godzinie
         wymagani_pracownicy_h = {}
         for d in dni_zakresu:
             d_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
@@ -186,13 +170,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 potrzeba_osob = math.ceil(sr_zam / cel_efektywnosci)
                 wymagani_pracownicy_h[d][h] = potrzeba_osob
 
-        # MODEL OPTYMALIZACYJNY
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
-        # Zmienne: czy p pracuje w d, zaczynając o godzinie s i trwając l godzin
-        mozliwe_starty = range(
-            godzina_otwarcia, godzina_otwarcia + 8
-        )  # Płynne starty
+        mozliwe_starty = range(godzina_otwarcia, godzina_otwarcia + 8)
         mozliwe_dlugosci = range(min_zmiana, max_zmiana + 1)
 
         zmienne_zmian = []
@@ -211,7 +191,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             "dev_minus", pracownicy, lowBound=0, cat="Continuous"
         )
 
-        # Ograniczenie: max 1 zmiana dziennie per pracownik
         for p in pracownicy:
             for d in dni_zakresu:
                 model += (
@@ -223,14 +202,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     <= 1
                 )
 
-                # Uwzględnienie urlopów
                 for u in st.session_state.urlopy_list:
                     if u["Pracownik"] == p and u["Od"] <= d <= u["Do"]:
                         for s in mozliwe_starty:
                             for l in mozliwe_dlugosci:
                                 model += y[p, d, s % 24, l] == 0
 
-        # Pokrycie zapotrzebowania w KAŻDEJ GODZINIE dnia
         for d in dni_zakresu:
             for h in range(24):
                 potrzebni = wymagani_pracownicy_h[d][h]
@@ -240,7 +217,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         for s in mozliwe_starty:
                             s_int = s % 24
                             for l in mozliwe_dlugosci:
-                                # Sprawdzenie czy godzina h wpada w zakres [s_int, s_int + l]
                                 if s_int <= h < s_int + l or (
                                     s_int + l > 24 and h < (s_int + l) % 24
                                 ):
@@ -250,7 +226,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
                     model += pulp.lpSum(pracujacy_w_godzinie) >= potrzebni
 
-        # Równomierny podział ogólnych godzin pracy
         for p in pracownicy:
             dni_wolne_count = sum(
                 1
@@ -270,14 +245,13 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-        # Tabela wyników
+        # CZYSTA TABELA DLA KIEROWNIKA
         tabela = []
         godziny_pracownikow = {p: 0 for p in pracownicy}
 
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             row = {"Data": d.strftime("%Y-%m-%d"), "Dzień": dzien_nazwa}
-            obsada_dnia_rh = 0
 
             for p in pracownicy:
                 assigned = False
@@ -288,23 +262,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                             end_h = (s_int + l) % 24
                             row[p] = f"{s_int:02d}:00 - {end_h:02d}:00 ({l}h)"
                             godziny_pracownikow[p] += l
-                            obsada_dnia_rh += l
                             assigned = True
                             break
                     if assigned:
                         break
                 if not assigned:
                     row[p] = "OFF"
-
-            wol = srednie_wolumeny_dzienne.get(dzien_nazwa, 0)
-            wymagane_rh = wol / cel_efektywnosci if cel_efektywnosci > 0 else 0
-
-            row["Suma RH"] = round(obsada_dnia_rh, 1)
-            row["Wymagane RH"] = round(wymagane_rh, 1)
-            row["Śr. Zamówień (Looker)"] = round(wol, 1)
-            row["Plan. Efektywność (zam/h)"] = (
-                round(wol / obsada_dnia_rh, 1) if obsada_dnia_rh > 0 else 0
-            )
 
             tabela.append(row)
 
@@ -313,23 +276,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             "Dzień": "-",
             **{p: f"{int(godziny_pracownikow[p])}h" for p in pracownicy},
         }
-        row_sum["Suma RH"] = round(sum(r["Suma RH"] for r in tabela), 1)
-        row_sum["Wymagane RH"] = round(sum(r["Wymagane RH"] for r in tabela), 1)
-        row_sum["Śr. Zamówień (Looker)"] = round(
-            sum(r["Śr. Zamówień (Looker)"] for r in tabela), 1
-        )
-        row_sum["Plan. Efektywność (zam/h)"] = (
-            round(
-                row_sum["Śr. Zamówień (Looker)"] / row_sum["Suma RH"], 1
-            )
-            if row_sum["Suma RH"] > 0
-            else 0
-        )
 
         tabela.append(row_sum)
         df_res = pd.DataFrame(tabela)
 
-        st.success("✅ Grafik wygenerowany pomyślnie z uwzględnieniem szczytów godzinowych!")
+        st.success("✅ Grafik został wygenerowany pomyślnie!")
         st.dataframe(df_res, use_container_width=True)
 
         buffer = io.BytesIO()
