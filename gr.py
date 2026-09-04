@@ -1,25 +1,13 @@
 from datetime import datetime, timedelta
 import io
 import math
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
+import pulp
 import streamlit as st
 
 st.set_page_config(page_title="Optymalizator Grafiku Magazynu", layout="wide")
-
-try:
-    import openpyxl
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-except ImportError:
-    st.error(
-        "❌ Brakuje biblioteki 'openpyxl'. Upewnij się, że dodałeś 'openpyxl' do pliku requirements.txt na GitHubie!"
-    )
-
-try:
-    import pulp
-except ImportError:
-    st.error(
-        "❌ Brakuje biblioteki 'pulp'. Upewnij się, że dodałeś 'pulp' do pliku requirements.txt na GitHubie!"
-    )
 
 st.title("📦 Optymalizator Grafiku Magazynu")
 
@@ -167,7 +155,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU Z WYRÓWNYWANIEM ETATÓW I BLOKADĄ PRZERW ---
+# --- 4. GENEROWANIE GRAFIKU Z DOKŁADNYM PODZIAŁEM ZMIAN ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -199,6 +187,14 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     if koniec <= godzina_zamkniecia_ds:
                         prawidlowe_zmiany.append((s, l))
 
+            # DEFINICJA TYPÓW ZMIAN ZGODNIE Z NOWYMI WYTYCZNYMI:
+            # 1. Ranna: start o 06:00
+            # 2. Wieczorna: koniec dokładnie o godzina_zamkniecia_ds (23:30 / 01:30)
+            # 3. Środkowa: wszystkie pozostałe
+            zmiany_ranne = [(s, l) for s, l in prawidlowe_zmiany if s == 6.0]
+            zmiany_wieczorne = [(s, l) for s, l in prawidlowe_zmiany if (s + l) == godzina_zamkniecia_ds]
+            zmiany_srodkowe = [(s, l) for s, l in prawidlowe_zmiany if s > 6.0 and (s + l) < godzina_zamkniecia_ds]
+
             zmienne_zmian = []
             for p in pracownicy:
                 for d in dni_zakresu:
@@ -214,9 +210,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 "dev_minus", pracownicy, lowBound=0, cat="Continuous"
             )
 
-            model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
+            dev_ranne = pulp.LpVariable.dicts("dev_ranne", pracownicy, lowBound=0, cat="Continuous")
+            dev_wieczor = pulp.LpVariable.dicts("dev_wieczor", pracownicy, lowBound=0, cat="Continuous")
 
-            # --- DYNAMICZNE WYLICZANIE DNI DOSTĘPNOŚCI DLA PRACOWNIKA ---
+            model += pulp.lpSum(dev_plus[p] + dev_minus[p] + 2.0 * dev_ranne[p] + 2.0 * dev_wieczor[p] for p in pracownicy)
+
             for p in pracownicy:
                 dni_absencji = 0
                 for d in dni_zakresu:
@@ -237,10 +235,16 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     for s, l in prawidlowe_zmiany
                 )
 
-                # Różnica w etacie max +/- 10h od celu pracownika (czyli max 20h różnicy między pełnymi etatami)
                 model += suma_h_p <= target_p + 10.0
                 model += suma_h_p >= target_p - 10.0
                 model += suma_h_p + dev_minus[p] - dev_plus[p] == target_p
+
+                # BALANS ZMIAN RANNYCH (OD 06:00) I WIECZORNYCH (DO 23:30/01:30)
+                num_ranne = pulp.lpSum(y[p, d, s, l] for d in dni_zakresu for s, l in zmiany_ranne)
+                num_wieczorne = pulp.lpSum(y[p, d, s, l] for d in dni_zakresu for s, l in zmiany_wieczorne)
+
+                model += num_ranne - num_wieczorne <= 2.0 + dev_ranne[p]
+                model += num_wieczorne - num_ranne <= 2.0 + dev_wieczor[p]
 
                 for idx_d, d in enumerate(dni_zakresu):
                     model += (
@@ -253,7 +257,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                             for s, l in prawidlowe_zmiany:
                                 model += y[p, d, s, l] == 0
 
-                    # 12H ODPOCZYNKU
                     if idx_d < len(dni_zakresu) - 1:
                         d_next = dni_zakresu[idx_d + 1]
                         for s1, l1 in prawidlowe_zmiany:
@@ -266,7 +269,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                                         <= 1
                                     )
 
-                # --- WYKLUCZANIE DŁUGICH DZIUR (MAX 3 DNI WOLNEGO Z RZĘDU) ---
                 for idx_d in range(len(dni_zakresu) - 3):
                     window = [dni_zakresu[idx_d + i] for i in range(4)]
                     has_vacation = any(
@@ -318,7 +320,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             if pulp.LpStatus[status] != "Optimal":
                 st.error(
-                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU! Zasady (12h odpoczynku, brak 4 dni wolnego z rzędu, wyrównywanie etatów) "
+                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU! Zbiór reguł (balans otwarć 06:00 i zamknięć 23:30, 12h odpoczynku, brak 4 dni wolnego z rzędu) "
                     "oraz urlopy uniemożliwiają wyliczenie optymalnego grafiku. Dodaj więcej pracowników na zlecenie."
                 )
             else:
@@ -435,7 +437,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
                                 fill_color = (
                                     fill_shift_morning
-                                    if s <= 10.0
+                                    if s == 6.0
                                     else fill_shift_afternoon
                                 )
 
@@ -525,13 +527,13 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 wb.save(buffer)
 
                 st.success(
-                    "✅ Grafik miesięczny wygenerowany pomyślnie! Różnice w etacie ograniczone do max 20h, uwzględniono proporcje urlopowe i brak długich przerw."
+                    "✅ Grafik wygenerowany pomyślnie! Równe rozłożenie otwarć o 06:00, zamknięć o 23:30/01:30 oraz zmian środkowych."
                 )
 
                 st.download_button(
                     label="📥 Pobierz Grafik (.xlsx)",
                     data=buffer.getvalue(),
-                    file_name="grafik_magazyn_zbalansowany.xlsx",
+                    file_name="grafik_magazyn_balans_zmian.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         except Exception as e:
