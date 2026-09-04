@@ -17,9 +17,6 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
-# RAMY CZASOWE
-# Standard: Praca DS 06:00 - 23:30 (zamówienia do 23:00)
-# Nocny: Praca DS 06:00 - 01:30 (zamówienia do 01:00)
 godzina_otwarcia_ds = 6.0
 godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
 max_godzina_zamowien = 25 if is_nocny else 23       # 25h = 01:00 w nocy
@@ -158,7 +155,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU Z PODSUMOWANIEM EXCELA ---
+# --- 4. GENEROWANIE STABILNEGO EXCELA Z ZAMROŻENIEM OKIEN ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -260,10 +257,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-        # --- EXCEL GENERATOR Z PODSUMOWANIEM NA DOLE ---
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Grafik"
+
+        # TWARDE STABILNE ZAMROŻENIE OKIEN (KOLUMNA A ORAZ NAGŁÓWKI 1-2 SĄ ZABLOKOWANE)
+        ws.freeze_panes = "B3"
 
         font_bold = Font(name="Calibri", size=10, bold=True)
         font_regular = Font(name="Calibri", size=10)
@@ -286,6 +285,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         fill_summary = PatternFill(
             start_color="B4C6E7", end_color="B4C6E7", fill_type="solid"
         )
+        fill_total_sum = PatternFill(
+            start_color="70AD47", end_color="70AD47", fill_type="solid"
+        )  # Zielony dla sumy całkowitej
         fill_date_weekend = PatternFill(
             start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"
         )
@@ -388,7 +390,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             row_idx += 1
 
-        # WIERSZ PODSUMOWANIA SIZI (ŁĄCZNIE GODZIN PER PRACOWNIK)
+        # WIERSZ 1: ŁĄCZNIE GODZIN PER PRACOWNIK
         cell_sum_label = ws.cell(row=row_idx, column=1)
         cell_sum_label.value = "ŁĄCZNIE"
         cell_sum_label.font = font_bold
@@ -396,6 +398,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         cell_sum_label.alignment = align_center
         cell_sum_label.border = thin_border
 
+        grand_total_hours = 0.0
         col_idx = 2
         for p in pracownicy:
             col_start_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -408,24 +411,47 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             cell_total.fill = fill_summary
             cell_total.alignment = align_center
 
+            grand_total_hours += godziny_pracownikow[p]
+
             for i in range(3):
                 ws.cell(row=row_idx, column=col_idx + i).border = thin_border
 
             col_idx += 3
 
-        ws.column_dimensions["A"].width = 14
+        row_idx += 1
+
+        # WIERSZ 2: PODSUMOWANIE CAŁKOWITE WŁASNYCH ROBOCZOGODZIN MAGAZYNU
+        cell_grand_label = ws.cell(row=row_idx, column=1)
+        cell_grand_label.value = "SUMA CAŁKOWITA"
+        cell_grand_label.font = font_bold
+        cell_grand_label.fill = fill_total_sum
+        cell_grand_label.alignment = align_center
+        cell_grand_label.border = thin_border
+
+        last_col_letter = openpyxl.utils.get_column_letter(col_idx - 1)
+        ws.merge_cells(f"B{row_idx}:{last_col_letter}{row_idx}")
+        cell_grand_val = ws[f"B{row_idx}"]
+        cell_grand_val.value = f"{round(grand_total_hours, 1)} Roboczogodzin (RH)"
+        cell_grand_val.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        cell_grand_val.fill = fill_total_sum
+        cell_grand_val.alignment = align_center
+
+        for c in range(2, col_idx):
+            ws.cell(row=row_idx, column=c).border = thin_border
+
+        ws.column_dimensions["A"].width = 16
         for c in range(2, col_idx):
             col_letter = openpyxl.utils.get_column_letter(c)
-            ws.column_dimensions[col_letter].width = 9
+            ws.column_dimensions[col_letter].width = 10
 
         buffer = io.BytesIO()
         wb.save(buffer)
 
-        st.success("✅ Grafik wygenerowany pomyślnie z podsumowaniem godzin na dole!")
+        st.success("✅ Grafik wygenerowany pomyślnie! Zamrożono okna dla stabilności i dodano sumę całkowitą godzin na dole.")
 
         st.download_button(
-            label="📥 Pobierz Grafik zgodny ze wzorem (.xlsx)",
+            label="📥 Pobierz Stabilny Grafik (.xlsx)",
             data=buffer.getvalue(),
-            file_name="grafik_magazyn_wzor.xlsx",
+            file_name="grafik_magazyn_stabilny.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
