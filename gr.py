@@ -15,9 +15,11 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
-# TWARDE RAMY CZASOWE MAGAZYNU (DS)
-godzina_otwarcia_ds = 6  # Zawsze 06:00
-godzina_zamkniecia_ds = 1.5 if is_nocny else 23.5  # Max 01:30 lub 23:30
+# TWARDE RAMY CZASOWE
+# Standard: Praca DS 06:00 - 23:30 (zamówienia 07:00 - 23:00)
+# Nocny: Praca DS 06:00 - 01:30 (zamówienia 07:00 - 01:00)
+godzina_otwarcia_ds = 6.0
+godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -174,20 +176,16 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
-        # RIGID RANGE VALIDATION FOR DS WAREHOUSE HOURS
+        # GENEROWANIE ZMIAN Z KROKIEM 30 MINUT DO DOKŁADNEJ GODZINY ZAMKNIĘCIA DS
         prawidlowe_zmiany = []
-        for s in range(godzina_otwarcia_ds, 24):
-            for l in range(min_zmiana, max_zmiana + 1):
-                koniec_float = s + l
-                if not is_nocny:
-                    # Standard DS: Max limit 23:30 (23.5)
-                    if koniec_float <= 23.5:
-                        prawidlowe_zmiany.append((s, l))
-                else:
-                    # Nocny DS: Praca może przechodzić do 01:30 (25.5h)
-                    koniec_mod = koniec_float % 24
-                    if s >= 6 and (koniec_float <= 25.5 or koniec_mod <= 1.5):
-                        prawidlowe_zmiany.append((s, l))
+        starty = [6.0 + 0.5 * i for i in range(int((22.0 - 6.0) * 2) + 1)]
+        dlugosci = [float(l) for l in range(min_zmiana, max_zmiana + 1)]
+
+        for s in starty:
+            for l in dlugosci:
+                koniec = s + l
+                if koniec <= godzina_zamkniecia_ds:
+                    prawidlowe_zmiany.append((s, l))
 
         zmienne_zmian = []
         for p in pracownicy:
@@ -236,9 +234,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     pracujacy_w_godzinie = []
                     for p in pracownicy:
                         for s, l in prawidlowe_zmiany:
-                            if s <= h < s + l or (
-                                s + l > 24 and h < (s + l) % 24
-                            ):
+                            if s <= h and (s + l) >= (h + 1):
                                 pracujacy_w_godzinie.append(y[p, d, s, l])
 
                     model += pulp.lpSum(pracujacy_w_godzinie) >= potrzebni
@@ -248,6 +244,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         tabela = []
         godziny_pracownikow = {p: 0 for p in pracownicy}
 
+        def format_time(h_float):
+            h_int = int(h_float) % 24
+            m_int = int(round((h_float - int(h_float)) * 60))
+            return f"{h_int:02d}:{m_int:02d}"
+
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             row = {"Data": d.strftime("%Y-%m-%d"), "Dzień": dzien_nazwa}
@@ -256,10 +257,10 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 assigned = False
                 for s, l in prawidlowe_zmiany:
                     if y[p, d, s, l].varValue == 1:
-                        end_float = s + l
-                        end_h = int(end_float) % 24
-                        end_m = int((end_float - int(end_float)) * 60)
-                        row[p] = f"{s:02d}:00 - {end_h:02d}:{end_m:02d} ({l}h)"
+                        s_str = format_time(s)
+                        e_str = format_time(s + l)
+                        l_str = f"{int(l)}h" if l.is_integer() else f"{l}h"
+                        row[p] = f"{s_str} - {e_str} ({l_str})"
                         godziny_pracownikow[p] += l
                         assigned = True
                         break
@@ -271,14 +272,14 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         row_sum = {
             "Data": "ŁĄCZNIE",
             "Dzień": "-",
-            **{p: f"{int(godziny_pracownikow[p])}h" for p in pracownicy},
+            **{p: f"{round(godziny_pracownikow[p], 1)}h" for p in pracownicy},
         }
 
         tabela.append(row_sum)
         df_res = pd.DataFrame(tabela)
 
         st.success(
-            "✅ Grafik wygenerowany pomyślnie! Zmiany rygorystycznie przestrzegają godzin pracy magazynu DS (06:00 - 23:30 / 01:30)."
+            "✅ Grafik wygenerowany pomyślnie! Zmiany zamykają się precyzyjnie o 23:30 (lub 01:30)."
         )
         st.dataframe(df_res, use_container_width=True)
 
