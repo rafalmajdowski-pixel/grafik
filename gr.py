@@ -16,14 +16,13 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
-# Godzina otwarcia magazynu
+# Godzina otwarcia magazynu (6:00 dla Standard, 18:00 dla Nocny)
 godzina_otwarcia = 18 if is_nocny else 6
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
 )
 
-# Sztywne zakresy pracy zaszyte w algorytmie (6-12h)
 min_zmiana = 6
 max_zmiana = 12
 
@@ -60,8 +59,8 @@ if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
 else:
     dni_zakresu = [okres_grafiku[0]]
 
-# --- 2. WGRANIE DANYCH Z LOOKERA ---
-st.header("2. Wgraj raport z Lookera (zamówienia z aplikacji)")
+# --- 2. AUTOMATYCZNY odczyt DANYCH Z LOOKERA ---
+st.header("2. Wgraj raport z Lookera")
 uploaded_file = st.file_uploader(
     "Wybierz plik Excel (.xlsx) lub CSV z danymi historycznymi",
     type=["xlsx", "csv"],
@@ -75,20 +74,61 @@ if uploaded_file:
         else:
             df_looker = pd.read_excel(uploaded_file)
 
-        cols = df_looker.columns.tolist()
-        col_data = st.selectbox("Wybierz kolumnę z Datą:", cols, index=0)
+        # AUTOMATYCZNE WYKRYWANIE KOLUMN
+        col_data = None
+        col_wolumen = None
 
-        num_cols = df_looker.select_dtypes(include=["number"]).columns.tolist()
-        default_idx = (
-            cols.index(num_cols[0]) if num_cols and num_cols[0] in cols else 0
-        )
+        # Szukanie kolumny daty
+        for c in df_looker.columns:
+            c_str = str(c).lower()
+            if any(
+                k in c_str
+                for k in ["data", "date", "day", "dzien", "dzień", "created"]
+            ):
+                col_data = c
+                break
+        if not col_data:
+            col_data = df_looker.columns[0]
 
-        col_wolumen = st.selectbox(
-            "Wybierz kolumnę z Wolumenem (liczba zamówień):",
-            cols,
-            index=default_idx,
-        )
+        # Szukanie kolumny z wolumenem (zamówieniami)
+        for c in df_looker.columns:
+            if c == col_data:
+                continue
+            c_str = str(c).lower()
+            if any(
+                k in c_str
+                for k in [
+                    "wolumen",
+                    "orders",
+                    "zamowienia",
+                    "zamówienia",
+                    "count",
+                    "paczki",
+                    "quantity",
+                ]
+            ):
+                col_wolumen = c
+                break
 
+        # Jeśli nie znaleziono po nazwie, weź pierwszą kolumnę numeryczną
+        if not col_wolumen:
+            num_cols = [
+                c
+                for c in df_looker.select_dtypes(
+                    include=["number"]
+                ).columns.tolist()
+                if c != col_data
+            ]
+            if num_cols:
+                col_wolumen = num_cols[0]
+            else:
+                col_wolumen = (
+                    df_looker.columns[1]
+                    if len(df_looker.columns) > 1
+                    else df_looker.columns[0]
+                )
+
+        # Przetwarzanie daty i wolumenu
         df_looker["_dt"] = pd.to_datetime(df_looker[col_data], errors="coerce")
         df_looker["Dzien_Nazwa"] = (
             df_looker["_dt"]
@@ -103,11 +143,11 @@ if uploaded_file:
         srednie_wolumeny = (
             df_looker.groupby("Dzien_Nazwa")["_wolumen_num"].mean().to_dict()
         )
-        st.success("✅ Dane z Lookera zostały przetworzone pomyślnie.")
-    except Exception as e:
-        st.error(
-            f"Błąd podczas odczytu pliku: {e}. Sprawdź wybór kolumn."
+        st.success(
+            f"✅ Automatycznie odczytano dane z Lookera! (Kolumna daty: **{col_data}**, wolumen: **{col_wolumen}**)"
         )
+    except Exception as e:
+        st.error(f"Błąd podczas automatycznego odczytu pliku: {e}")
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
 st.header("3. Zespół i Wolne / Urlopy")
@@ -186,7 +226,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     f"Brakuje co najmniej **{roznica} roboczogodzin (RH)** do obsługi wolumenu!"
                 )
 
-        # MODEL PU-LP
+        # MODEL OPTYMALIZACYJNY
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
         pracuje = pulp.LpVariable.dicts(
@@ -253,7 +293,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             for p in pracownicy:
                 val = godziny[p, d].varValue
                 if val and val >= min_zmiana:
-                    # Wyliczenie poprawnej godziny startu i końca
                     start_h = (godzina_otwarcia + stagger_offset) % 24
                     end_h_float = start_h + val
                     end_h = int(end_h_float) % 24
@@ -265,7 +304,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     godziny_pracownikow[p] += val
                     obsada_dnia_rh += val
 
-                    # Stopniowanie wejść kolejnych osób o 2h (max do godziny 12)
                     stagger_offset = (stagger_offset + 2) % 6
                 else:
                     row[p] = "OFF"
