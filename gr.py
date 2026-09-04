@@ -12,25 +12,29 @@ st.title("📦 Optymalizator Grafiku Magazynu")
 
 # --- SIDEBAR: PARAMETRY EFEKTYWNOŚCI I OBSADY ---
 st.sidebar.header("⚙️ Parametry Magazynu")
+
+typ_magazynu = st.sidebar.selectbox(
+    "Typ magazynu / Ramki czasowe",
+    [
+        "Standardowy (Praca: 06:00-23:30 | Zamówienia: 07:00-23:00)",
+        "Nocny (Praca: 06:00-01:30 | Zamówienia: 07:00-01:00)",
+    ],
+)
+
+is_nocny = "Nocny" in typ_magazynu
+
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
 )
-godzina_otwarcia = st.sidebar.number_input(
-    "Godzina otwarcia magazynu (np. 6 dla 06:00)",
-    min_value=0,
-    max_value=23,
-    value=6,
-)
 
-# Zmiany w zakresie 6-12h
 min_zmiana = st.sidebar.slider("Minimalna długość zmiany (h)", 4, 8, 6)
 max_zmiana = st.sidebar.slider("Maksymalna długość zmiany (h)", 8, 12, 12)
 
 min_obsada_otwarcie = st.sidebar.number_input(
-    "Min. obsada na otwarciu (osoby)", min_value=1, value=1
+    "Min. obsada na otwarciu (06:00)", min_value=1, value=1
 )
 min_obsada_zamkniecie = st.sidebar.number_input(
-    "Min. obsada na zamknięciu (osoby)", min_value=1, value=1
+    "Min. obsada na zamknięciu (23:30 / 01:30)", min_value=1, value=1
 )
 
 MAPA_DNI = {
@@ -46,7 +50,7 @@ MAPA_DNI = {
 # --- 1. ZAKRES DAT DLA GRAFIKU ---
 st.header("1. Wybierz okres grafiku")
 okres_grafiku = st.date_input(
-    "Wskaz zakres od - do (kliknij początek i koniec w kalendarzu):",
+    "Wskaż zakres od - do (kliknij początek i koniec w kalendarzu):",
     value=(datetime.now().date(), datetime.now().date() + timedelta(days=6)),
 )
 
@@ -59,8 +63,8 @@ if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
 else:
     dni_zakresu = [okres_grafiku[0]]
 
-# --- 2. WGRANIE DANYCH Z LOOKERA (ŚREDNIA Z LAST 2-4 WEEKS) ---
-st.header("2. Wgraj raport z Lookera (dane z 2-4 tygodni)")
+# --- 2. WGRANIE DANYCH Z LOOKERA ---
+st.header("2. Wgraj raport z Lookera (zamówienia z aplikacji)")
 uploaded_file = st.file_uploader(
     "Wybierz plik Excel (.xlsx) lub CSV z danymi historycznymi",
     type=["xlsx", "csv"],
@@ -80,7 +84,7 @@ if uploaded_file:
     num_cols = df_looker.select_dtypes(include=["number"]).columns.tolist()
     default_vol_idx = cols.index(num_cols[0]) if num_cols else 1
     col_wolumen = st.selectbox(
-        "Wybierz kolumnę z Wolumenem (liczba zamówień):",
+        "Wybierz kolumnę z Wolumenem (liczba zamówień z aplikacji):",
         cols,
         index=default_vol_idx,
     )
@@ -93,7 +97,6 @@ if uploaded_file:
         .fillna(df_looker[col_data])
     )
 
-    # Wyliczanie średniej z danych historycznych po dniach tygodnia
     srednie_wolumeny = (
         df_looker.groupby("Dzien_Nazwa")[col_wolumen].mean().to_dict()
     )
@@ -174,10 +177,8 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             "dev_minus", pracownicy, lowBound=0, cat="Continuous"
         )
 
-        # Ograniczenia dla pracowników i urlopów
         for p in pracownicy:
             for d in dni_zakresu:
-                # Długość zmiany od min_zmiana (np. 6h) do max_zmiana (np. 12h)
                 model += godziny[p, d] >= min_zmiana * pracuje[p, d]
                 model += godziny[p, d] <= max_zmiana * pracuje[p, d]
 
@@ -189,7 +190,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         model += pracuje[p, d] == 0
                         model += godziny[p, d] == 0
 
-        # Ograniczenia dzienne
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             wol = srednie_wolumeny.get(dzien_nazwa, 0)
@@ -207,7 +207,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 >= min_obsada_zamkniecie
             )
 
-        # Wyrównywanie godzin z korektą na wolne
         for p in pracownicy:
             dni_wolne_count = sum(
                 1
@@ -222,23 +221,26 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-        # Generowanie wyników
         tabela = []
         godziny_pracownikow = {p: 0 for p in pracownicy}
+
+        godzina_zamkniecia_str = "01:30" if is_nocny else "23:30"
 
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             row = {"Data": d.strftime("%Y-%m-%d"), "Dzień": dzien_nazwa}
             obsada_dnia_rh = 0
-            kolejne_godziny_startu = godzina_otwarcia
+
+            # Układanie startu zmian w zależności od obsady
+            kolejne_godziny_startu = 6
 
             for p in pracownicy:
                 val = godziny[p, d].varValue
                 if val and val >= min_zmiana:
                     g_start = kolejne_godziny_startu
-                    g_end = int(g_start + val) % 24
-                    row[p] = f"{g_start:02d}:00 - {g_end:02d}:00 ({int(val)}h)"
-
+                    row[p] = (
+                        f"{g_start:02d}:00 - {godzina_zamkniecia_str} ({round(val, 1)}h)"
+                    )
                     godziny_pracownikow[p] += val
                     obsada_dnia_rh += val
                     kolejne_godziny_startu = (kolejne_godziny_startu + 2) % 24
@@ -248,7 +250,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             wol = srednie_wolumeny.get(dzien_nazwa, 0)
             row["Suma RH"] = round(obsada_dnia_rh, 1)
             row["Wymagane RH"] = round(wol / cel_efektywnosci, 1)
-            row["Śr. Zamówień (Looker)"] = round(wol, 1)
+            row["Śr. Zamówień (Aplikacja)"] = round(wol, 1)
             row["Plan. Efektywność (zam/h)"] = (
                 round(wol / obsada_dnia_rh, 1) if obsada_dnia_rh > 0 else 0
             )
@@ -262,12 +264,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         }
         row_sum["Suma RH"] = round(sum(r["Suma RH"] for r in tabela), 1)
         row_sum["Wymagane RH"] = round(sum(r["Wymagane RH"] for r in tabela), 1)
-        row_sum["Śr. Zamówień (Looker)"] = round(
-            sum(r["Śr. Zamówień (Looker)"] for r in tabela), 1
+        row_sum["Śr. Zamówień (Aplikacja)"] = round(
+            sum(r["Śr. Zamówień (Aplikacja)"] for r in tabela), 1
         )
         row_sum["Plan. Efektywność (zam/h)"] = (
             round(
-                row_sum["Śr. Zamówień (Looker)"] / row_sum["Suma RH"], 1
+                row_sum["Śr. Zamówień (Aplikacja)"] / row_sum["Suma RH"], 1
             )
             if row_sum["Suma RH"] > 0
             else 0
