@@ -13,18 +13,17 @@ st.title("📦 Optymalizator Grafiku Magazynu")
 # --- SIDEBAR: PARAMETRY EFEKTYWNOŚCI I OBSADY ---
 st.sidebar.header("⚙️ Parametry Magazynu")
 
-typ_magazynu = st.sidebar.selectbox(
-    "Typ magazynu",
-    ["Standardowy", "Nocny"],
-)
-
+typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
+
+# Godzina otwarcia magazynu
+godzina_otwarcia = 18 if is_nocny else 6
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
 )
 
-# Sztywne zakresy pracy zaszyte w algorytmie
+# Sztywne zakresy pracy zaszyte w algorytmie (6-12h)
 min_zmiana = 6
 max_zmiana = 12
 
@@ -79,7 +78,6 @@ if uploaded_file:
         cols = df_looker.columns.tolist()
         col_data = st.selectbox("Wybierz kolumnę z Datą:", cols, index=0)
 
-        # Bezpieczne wyznaczanie kolumn czysto numerycznych
         num_cols = df_looker.select_dtypes(include=["number"]).columns.tolist()
         default_idx = (
             cols.index(num_cols[0]) if num_cols and num_cols[0] in cols else 0
@@ -91,7 +89,6 @@ if uploaded_file:
             index=default_idx,
         )
 
-        # Konwersja daty i danych liczbowych
         df_looker["_dt"] = pd.to_datetime(df_looker[col_data], errors="coerce")
         df_looker["Dzien_Nazwa"] = (
             df_looker["_dt"]
@@ -109,7 +106,7 @@ if uploaded_file:
         st.success("✅ Dane z Lookera zostały przetworzone pomyślnie.")
     except Exception as e:
         st.error(
-            f"Błąd podczas odczytu pliku: {e}. Sprawdź, czy wybrano poprawną kolumnę z wolumenem."
+            f"Błąd podczas odczytu pliku: {e}. Sprawdź wybór kolumn."
         )
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
@@ -156,14 +153,13 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
     elif not pracownicy:
         st.error("Proszę wpisać listę pracowników!")
     else:
-        # WERYFIKACJA MOŻLIWOŚCI KADROWYCH PRZED PU-LP
+        # WERYFIKACJA MOŻLIWOŚCI KADROWYCH
         brakujace_godziny = {}
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             wol = srednie_wolumeny.get(dzien_nazwa, 0)
             wymagane_rh = wol / cel_efektywnosci
 
-            # Dostępni pracownicy w dany dzień (którzy nie mają urlopu)
             dostepni_dzisiaj = [
                 p
                 for p in pracownicy
@@ -187,11 +183,10 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             for dzien_key, (roznica, dostepni) in brakujace_godziny.items():
                 st.error(
                     f"Dzień **{dzien_key}**: Dostępnych osób: **{dostepni}**. "
-                    f"Brakuje co najmniej **{roznica} roboczogodzin (RH)**, aby obsłużyć zamówienia z Lookera! "
-                    f"Dodaj pracowników lub zwiększ ich efektywność."
+                    f"Brakuje co najmniej **{roznica} roboczogodzin (RH)** do obsługi wolumenu!"
                 )
 
-        # MODEL OPTYMALIZACYJNY
+        # MODEL PU-LP
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
         pracuje = pulp.LpVariable.dicts(
@@ -206,17 +201,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             upBound=max_zmiana,
         )
 
-        na_otwarciu = pulp.LpVariable.dicts(
-            "otwarcie",
-            [(p, d) for p in pracownicy for d in dni_zakresu],
-            cat="Binary",
-        )
-        na_zamknieciu = pulp.LpVariable.dicts(
-            "zamkniecie",
-            [(p, d) for p in pracownicy for d in dni_zakresu],
-            cat="Binary",
-        )
-
         dev_plus = pulp.LpVariable.dicts(
             "dev_plus", pracownicy, lowBound=0, cat="Continuous"
         )
@@ -228,9 +212,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             for d in dni_zakresu:
                 model += godziny[p, d] >= min_zmiana * pracuje[p, d]
                 model += godziny[p, d] <= max_zmiana * pracuje[p, d]
-
-                model += na_otwarciu[p, d] <= pracuje[p, d]
-                model += na_zamknieciu[p, d] <= pracuje[p, d]
 
                 for u in st.session_state.urlopy_list:
                     if u["Pracownik"] == p and u["Od"] <= d <= u["Do"]:
@@ -245,27 +226,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             model += (
                 pulp.lpSum(godziny[p, d] for p in pracownicy) >= wymagane_rh
             )
-
-            # Pokrycie min obsady, jeśli są dostępni pracownicy
-            dostepni_dzisiaj = sum(
-                1
-                for p in pracownicy
-                if not any(
-                    u["Pracownik"] == p and u["Od"] <= d <= u["Do"]
-                    for u in st.session_state.urlopy_list
-                )
-            )
-
-            if dostepni_dzisiaj >= min_obsada_otwarcie:
-                model += (
-                    pulp.lpSum(na_otwarciu[p, d] for p in pracownicy)
-                    >= min_obsada_otwarcie
-                )
-            if dostepni_dzisiaj >= min_obsada_zamkniecie:
-                model += (
-                    pulp.lpSum(na_zamknieciu[p, d] for p in pracownicy)
-                    >= min_obsada_zamkniecie
-                )
 
         for p in pracownicy:
             dni_wolne_count = sum(
@@ -283,24 +243,30 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         tabela = []
         godziny_pracownikow = {p: 0 for p in pracownicy}
-        godzina_zamkniecia_str = "01:30" if is_nocny else "23:30"
 
         for d in dni_zakresu:
             dzien_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             row = {"Data": d.strftime("%Y-%m-%d"), "Dzień": dzien_nazwa}
             obsada_dnia_rh = 0
-            kolejne_godziny_startu = 6
 
+            stagger_offset = 0
             for p in pracownicy:
                 val = godziny[p, d].varValue
                 if val and val >= min_zmiana:
-                    g_start = kolejne_godziny_startu
-                    row[p] = (
-                        f"{g_start:02d}:00 - {godzina_zamkniecia_str} ({round(val, 1)}h)"
-                    )
+                    # Wyliczenie poprawnej godziny startu i końca
+                    start_h = (godzina_otwarcia + stagger_offset) % 24
+                    end_h_float = start_h + val
+                    end_h = int(end_h_float) % 24
+                    end_m = int((end_h_float - int(end_h_float)) * 60)
+
+                    time_str = f"{start_h:02d}:00 - {end_h:02d}:{end_m:02d} ({round(val, 1)}h)"
+                    row[p] = time_str
+
                     godziny_pracownikow[p] += val
                     obsada_dnia_rh += val
-                    kolejne_godziny_startu = (kolejne_godziny_startu + 2) % 24
+
+                    # Stopniowanie wejść kolejnych osób o 2h (max do godziny 12)
+                    stagger_offset = (stagger_offset + 2) % 6
                 else:
                     row[p] = "OFF"
 
