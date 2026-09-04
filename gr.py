@@ -17,8 +17,12 @@ st.sidebar.header("⚙️ Parametry Magazynu")
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
+# RAMY CZASOWE
+# Standard: Praca DS 06:00 - 23:30 (zamówienia do 23:00)
+# Nocny: Praca DS 06:00 - 01:30 (zamówienia do 01:00)
 godzina_otwarcia_ds = 6.0
-godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
+godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
+max_godzina_zamowien = 25 if is_nocny else 23       # 25h = 01:00 w nocy
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -88,12 +92,12 @@ if uploaded_file:
                 date_cols[dzien_nazwa].append(c)
 
         godziny_data = {
-            d: {h: [] for h in range(24)} for d in MAPA_DNI.values()
+            d: {h: [] for h in range(26)} for d in MAPA_DNI.values()
         }
 
         for idx, row in df_raw.iterrows():
             h_val = pd.to_numeric(row[col_hour], errors="coerce")
-            if pd.notna(h_val) and 0 <= int(h_val) <= 23:
+            if pd.notna(h_val) and 0 <= int(h_val) <= 25:
                 h_int = int(h_val)
                 for d_nazwa, cols_list in date_cols.items():
                     for c_date in cols_list:
@@ -108,7 +112,7 @@ if uploaded_file:
 
         for d_nazwa in MAPA_DNI.values():
             srednie_godzinowe[d_nazwa] = {}
-            for h in range(24):
+            for h in range(26):
                 vals = godziny_data[d_nazwa][h]
                 sr_h = sum(vals) / len(vals) if vals else 0
                 srednie_godzinowe[d_nazwa][h] = sr_h
@@ -154,7 +158,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU DLA WZORU EXCELA ---
+# --- 4. GENEROWANIE GRAFIKU Z PODSUMOWANIEM EXCELA ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -167,7 +171,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         for d in dni_zakresu:
             d_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
             wymagani_pracownicy_h[d] = {}
-            for h in range(24):
+            for h in range(max_godzina_zamowien + 1):
                 sr_zam = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
                 potrzeba_osob = math.ceil(sr_zam / cel_efektywnosci)
                 wymagani_pracownicy_h[d][h] = potrzeba_osob
@@ -243,8 +247,8 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 >= 1
             )
 
-            for h in range(24):
-                potrzebni = wymagani_pracownicy_h[d][h]
+            for h in range(7, max_godzina_zamowien):
+                potrzebni = wymagani_pracownicy_h[d].get(h, 0)
                 if potrzebni > 0:
                     pracujacy_w_godzinie = []
                     for p in pracownicy:
@@ -256,12 +260,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-        # --- TWORZENIE DOKŁADNEGO PLIKU EXCEL DLA WZORU ---
+        # --- EXCEL GENERATOR Z PODSUMOWANIEM NA DOLE ---
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Grafik"
 
-        # Style
         font_bold = Font(name="Calibri", size=10, bold=True)
         font_regular = Font(name="Calibri", size=10)
         align_center = Alignment(
@@ -280,6 +283,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         fill_header_sub = PatternFill(
             start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
         )
+        fill_summary = PatternFill(
+            start_color="B4C6E7", end_color="B4C6E7", fill_type="solid"
+        )
         fill_date_weekend = PatternFill(
             start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"
         )
@@ -289,12 +295,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         fill_shift_morning = PatternFill(
             start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"
-        )  # Żółty
+        )
         fill_shift_afternoon = PatternFill(
             start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"
-        )  # Zielonkawy/Fiolet
+        )
 
-        # Nagłówek A1: pl-waw-12
         ws.merge_cells("A1:A2")
         ws["A1"] = "pl-waw-12"
         ws["A1"].font = font_bold
@@ -306,13 +311,11 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             m_int = int(round((h_float - int(h_float)) * 60))
             return f"{h_int:02d}:{m_int:02d}"
 
-        # Ustawianie nagłówków pracowników (co 3 kolumny)
         col_idx = 2
         for p in pracownicy:
             col_start_letter = openpyxl.utils.get_column_letter(col_idx)
             col_end_letter = openpyxl.utils.get_column_letter(col_idx + 2)
 
-            # Scalenie dla nazwy pracownika w wierszu 1
             ws.merge_cells(f"{col_start_letter}1:{col_end_letter}1")
             cell_p = ws[f"{col_start_letter}1"]
             cell_p.value = p
@@ -320,7 +323,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             cell_p.fill = fill_header_main
             cell_p.alignment = align_center
 
-            # Pod-nagłówki: Start, Koniec, Suma w wierszu 2
             sub_headers = ["Start", "Koniec", "Suma"]
             for i, sh in enumerate(sub_headers):
                 cell_sh = ws.cell(row=2, column=col_idx + i)
@@ -332,8 +334,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             col_idx += 3
 
-        # Wypełnianie danymi dni
+        godziny_pracownikow = {p: 0.0 for p in pracownicy}
         row_idx = 3
+
         for d in dni_zakresu:
             cell_date = ws.cell(row=row_idx, column=1)
             cell_date.value = d.strftime("%d/%m/%Y")
@@ -341,7 +344,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             cell_date.alignment = align_center
             cell_date.border = thin_border
 
-            if d.weekday() in [5, 6]:  # Sobota / Niedziela
+            if d.weekday() in [5, 6]:
                 cell_date.fill = fill_date_weekend
             else:
                 cell_date.fill = fill_date_weekday
@@ -359,7 +362,8 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         c_end.value = format_time(s + l)
                         c_sum.value = round(l, 1)
 
-                        # Dobór koloru wypełnienia dla zmiany
+                        godziny_pracownikow[p] += l
+
                         fill_color = (
                             fill_shift_morning
                             if s <= 10.0
@@ -376,7 +380,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                         break
 
                 if not assigned:
-                    # Dzień wolny = puste komórki z ramką
                     for i in range(3):
                         cell = ws.cell(row=row_idx, column=col_idx + i)
                         cell.border = thin_border
@@ -385,7 +388,31 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             row_idx += 1
 
-        # Ustawianie optymalnych szerokości kolumn
+        # WIERSZ PODSUMOWANIA SIZI (ŁĄCZNIE GODZIN PER PRACOWNIK)
+        cell_sum_label = ws.cell(row=row_idx, column=1)
+        cell_sum_label.value = "ŁĄCZNIE"
+        cell_sum_label.font = font_bold
+        cell_sum_label.fill = fill_summary
+        cell_sum_label.alignment = align_center
+        cell_sum_label.border = thin_border
+
+        col_idx = 2
+        for p in pracownicy:
+            col_start_letter = openpyxl.utils.get_column_letter(col_idx)
+            col_end_letter = openpyxl.utils.get_column_letter(col_idx + 2)
+
+            ws.merge_cells(f"{col_start_letter}{row_idx}:{col_end_letter}{row_idx}")
+            cell_total = ws[f"{col_start_letter}{row_idx}"]
+            cell_total.value = f"{round(godziny_pracownikow[p], 1)}h"
+            cell_total.font = font_bold
+            cell_total.fill = fill_summary
+            cell_total.alignment = align_center
+
+            for i in range(3):
+                ws.cell(row=row_idx, column=col_idx + i).border = thin_border
+
+            col_idx += 3
+
         ws.column_dimensions["A"].width = 14
         for c in range(2, col_idx):
             col_letter = openpyxl.utils.get_column_letter(c)
@@ -394,7 +421,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         buffer = io.BytesIO()
         wb.save(buffer)
 
-        st.success("✅ Grafik wygenerowany dokładnie według wzoru Excela!")
+        st.success("✅ Grafik wygenerowany pomyślnie z podsumowaniem godzin na dole!")
 
         st.download_button(
             label="📥 Pobierz Grafik zgodny ze wzorem (.xlsx)",
