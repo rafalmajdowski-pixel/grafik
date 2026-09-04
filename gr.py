@@ -17,7 +17,7 @@ is_nocny = typ_magazynu == "Nocny"
 
 # TWARDE RAMY CZASOWE MAGAZYNU (DS)
 godzina_otwarcia_ds = 6  # Zawsze 06:00
-godzina_zamkniecia_ds = 1.5 if is_nocny else 23.5  # 01:30 lub 23:30
+godzina_zamkniecia_ds = 1.5 if is_nocny else 23.5  # Max 01:30 lub 23:30
 
 cel_efektywnosci = st.sidebar.number_input(
     "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
@@ -153,7 +153,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU ---
+# --- 4. GENEROWANIE GRAFIKU Z PRECYZYJNYMI GODZINAMI DS ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -174,14 +174,17 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
-        # GENEROWANIE ZMIAN OD G. 06:00 Z ZACHOWANIEM LIMITU PRACY DS
+        # RIGID RANGE VALIDATION FOR DS WAREHOUSE HOURS
         prawidlowe_zmiany = []
         for s in range(godzina_otwarcia_ds, 24):
             for l in range(min_zmiana, max_zmiana + 1):
                 koniec_float = s + l
-                if not is_nocny and koniec_float <= 23.5:
-                    prawidlowe_zmiany.append((s, l))
-                elif is_nocny:
+                if not is_nocny:
+                    # Standard DS: Max limit 23:30 (23.5)
+                    if koniec_float <= 23.5:
+                        prawidlowe_zmiany.append((s, l))
+                else:
+                    # Nocny DS: Praca może przechodzić do 01:30 (25.5h)
                     koniec_mod = koniec_float % 24
                     if s >= 6 and (koniec_float <= 25.5 or koniec_mod <= 1.5):
                         prawidlowe_zmiany.append((s, l))
@@ -194,7 +197,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
         y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-        # RÓWNOMIERNY PODZIAŁ GODZIN POMIĘDZY ZLECENIOBIORCÓW
+        # RÓWNOMIERNY PODZIAŁ GODZIN ZLECENIOBIORCÓW
         srednia_godzin_na_glowe = total_required_hours / len(pracownicy)
         dev_plus = pulp.LpVariable.dicts(
             "dev_plus", pracownicy, lowBound=0, cat="Continuous"
@@ -275,7 +278,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         df_res = pd.DataFrame(tabela)
 
         st.success(
-            "✅ Grafik wygenerowany pomyślnie z zachowaniem ram czasowych magazynu!"
+            "✅ Grafik wygenerowany pomyślnie! Zmiany rygorystycznie przestrzegają godzin pracy magazynu DS (06:00 - 23:30 / 01:30)."
         )
         st.dataframe(df_res, use_container_width=True)
 
