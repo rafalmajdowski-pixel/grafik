@@ -5,9 +5,7 @@ import pandas as pd
 import pulp
 import streamlit as st
 
-st.set_page_config(
-    page_title="Optymalizator Grafiku Magazynu", layout="wide"
-)
+st.set_page_config(page_title="Optymalizator Grafiku Magazynu", layout="wide")
 
 st.title("📦 Optymalizator Grafiku Magazynu")
 
@@ -112,16 +110,16 @@ if uploaded_file:
                 sr_h = sum(vals) / len(vals) if vals else 0
                 srednie_godzinowe[d_nazwa][h] = sr_h
 
-        st.success("✅ Plik z Lookera wczytany poprawnie.")
+        st.success("✅ Dane z Lookera zostały pomyślnie przetworzone.")
 
     except Exception as e:
         st.error(f"Błąd odczytu pliku: {e}")
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
-st.header("3. Zespół i Wolne / Urlopy")
+st.header("3. Dostępni Pracownicy (Zleceniobiorcy)")
 pracownicy_input = st.text_area(
-    "Lista pracowników (każdy w nowej linii):",
-    "Jan Kowalski\nPiotr Nowak\nAnna Wiśniewska",
+    "Lista pracowników na zlecenie (każdy w nowej linii):",
+    "Jan Kowalski\nPiotr Nowak\nAnna Wiśniewska\nTomasz Zieliński\nMichał Lewandowski",
 )
 pracownicy = [
     p.strip() for p in pracownicy_input.split("\n") if p.strip() != ""
@@ -130,7 +128,7 @@ pracownicy = [
 if "urlopy_list" not in st.session_state:
     st.session_state.urlopy_list = []
 
-st.subheader("Dodaj urlop lub dzień wolny dla pracownika:")
+st.subheader("Niedostępność pracownika (urlop / brak dyspozycyjności):")
 col_p, col_u1, col_u2, col_btn = st.columns([2, 2, 2, 1])
 
 with col_p:
@@ -153,7 +151,7 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU ---
+# --- 4. GENEROWANIE GRAFIKU (STRICT LOOKER DEMAND) ---
 st.header("4. Generowanie Grafiku")
 if st.button("🚀 Wygeneruj Grafik", type="primary"):
     if not uploaded_file:
@@ -167,85 +165,66 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
             wymagani_pracownicy_h[d] = {}
             for h in range(24):
                 sr_zam = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
+                # DOKŁADNE ZAPOTRZEBOWANIE: zamowienia / cel
                 potrzeba_osob = math.ceil(sr_zam / cel_efektywnosci)
                 wymagani_pracownicy_h[d][h] = potrzeba_osob
 
+        # MODEL OPTYMALIZUJĄCY MINIMALIZACJĘ ROBOCZOGODZIN
         model = pulp.LpProblem("Optymalizacja_Grafiku", pulp.LpMinimize)
 
-        mozliwe_starty = range(godzina_otwarcia, godzina_otwarcia + 8)
-        mozliwe_dlugosci = range(min_zmiana, max_zmiana + 1)
+        prawidlowe_zmiany = []
+        for s in range(godzina_otwarcia, 24):
+            for l in range(min_zmiana, max_zmiana + 1):
+                koniec_float = s + l
+                if not is_nocny and koniec_float <= 23.5:
+                    prawidlowe_zmiany.append((s, l))
+                elif is_nocny:
+                    koniec_mod = koniec_float % 24
+                    if s >= 18 and (koniec_float <= 25.5 or koniec_mod <= 1.5):
+                        prawidlowe_zmiany.append((s, l))
 
         zmienne_zmian = []
         for p in pracownicy:
             for d in dni_zakresu:
-                for s in mozliwe_starty:
-                    for l in mozliwe_dlugosci:
-                        zmienne_zmian.append((p, d, s % 24, l))
+                for s, l in prawidlowe_zmiany:
+                    zmienne_zmian.append((p, d, s, l))
 
         y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-        dev_plus = pulp.LpVariable.dicts(
-            "dev_plus", pracownicy, lowBound=0, cat="Continuous"
-        )
-        dev_minus = pulp.LpVariable.dicts(
-            "dev_minus", pracownicy, lowBound=0, cat="Continuous"
+        # CEL: MINIMALIZUJEMY CAŁKOWITĄ LICZBĘ PRZEPRACOWANYCH GODZIN
+        model += pulp.lpSum(
+            y[p, d, s, l] * l
+            for p in pracownicy
+            for d in dni_zakresu
+            for s, l in prawidlowe_zmiany
         )
 
         for p in pracownicy:
             for d in dni_zakresu:
+                # Max 1 zmiana dziennie
                 model += (
-                    pulp.lpSum(
-                        y[p, d, s % 24, l]
-                        for s in mozliwe_starty
-                        for l in mozliwe_dlugosci
-                    )
-                    <= 1
+                    pulp.lpSum(y[p, d, s, l] for s, l in prawidlowe_zmiany) <= 1
                 )
 
                 for u in st.session_state.urlopy_list:
                     if u["Pracownik"] == p and u["Od"] <= d <= u["Do"]:
-                        for s in mozliwe_starty:
-                            for l in mozliwe_dlugosci:
-                                model += y[p, d, s % 24, l] == 0
+                        for s, l in prawidlowe_zmiany:
+                            model += y[p, d, s, l] == 0
 
+        # POKRYCIE GODZINOWE ZAPOTRZEBOWANIA DLA ZAMÓWIEŃ Z LOOKERA
         for d in dni_zakresu:
             for h in range(24):
                 potrzebni = wymagani_pracownicy_h[d][h]
-                if potrzebni > 0:
-                    pracujacy_w_godzinie = []
-                    for p in pracownicy:
-                        for s in mozliwe_starty:
-                            s_int = s % 24
-                            for l in mozliwe_dlugosci:
-                                if s_int <= h < s_int + l or (
-                                    s_int + l > 24 and h < (s_int + l) % 24
-                                ):
-                                    pracujacy_w_godzinie.append(
-                                        y[p, d, s_int, l]
-                                    )
+                pracujacy_w_godzinie = []
+                for p in pracownicy:
+                    for s, l in prawidlowe_zmiany:
+                        if s <= h < s + l or (s + l > 24 and h < (s + l) % 24):
+                            pracujacy_w_godzinie.append(y[p, d, s, l])
 
-                    model += pulp.lpSum(pracujacy_w_godzinie) >= potrzebni
+                model += pulp.lpSum(pracujacy_w_godzinie) >= potrzebni
 
-        for p in pracownicy:
-            dni_wolne_count = sum(
-                1
-                for d in dni_zakresu
-                for u in st.session_state.urlopy_list
-                if u["Pracownik"] == p and u["Od"] <= d <= u["Do"]
-            )
-            cel_godzin = max(0, (len(dni_zakresu) * 8) - (dni_wolne_count * 8))
-            suma_h = pulp.lpSum(
-                y[p, d, s % 24, l] * l
-                for d in dni_zakresu
-                for s in mozliwe_starty
-                for l in mozliwe_dlugosci
-            )
-            model += suma_h + dev_minus[p] - dev_plus[p] == cel_godzin
-
-        model += pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
         model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-        # CZYSTA TABELA DLA KIEROWNIKA
         tabela = []
         godziny_pracownikow = {p: 0 for p in pracownicy}
 
@@ -255,16 +234,12 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             for p in pracownicy:
                 assigned = False
-                for s in mozliwe_starty:
-                    s_int = s % 24
-                    for l in mozliwe_dlugosci:
-                        if y[p, d, s_int, l].varValue == 1:
-                            end_h = (s_int + l) % 24
-                            row[p] = f"{s_int:02d}:00 - {end_h:02d}:00 ({l}h)"
-                            godziny_pracownikow[p] += l
-                            assigned = True
-                            break
-                    if assigned:
+                for s, l in prawidlowe_zmiany:
+                    if y[p, d, s, l].varValue == 1:
+                        end_h = (s + l) % 24
+                        row[p] = f"{s:02d}:00 - {end_h:02d}:00 ({l}h)"
+                        godziny_pracownikow[p] += l
+                        assigned = True
                         break
                 if not assigned:
                     row[p] = "OFF"
@@ -280,7 +255,9 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
         tabela.append(row_sum)
         df_res = pd.DataFrame(tabela)
 
-        st.success("✅ Grafik został wygenerowany pomyślnie!")
+        st.success(
+            "✅ Grafik wygenerowany optymalnie pod czysty wolumen z Lookera!"
+        )
         st.dataframe(df_res, use_container_width=True)
 
         buffer = io.BytesIO()
