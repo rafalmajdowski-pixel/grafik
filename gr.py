@@ -6,65 +6,65 @@ import streamlit as st
 
 # --- KONFIGURACJA STRONY STREAMLIT ---
 st.set_page_config(
-    page_title="Jush! - Optymalizator Grafiku Magazynu (DS)",
+    page_title="żabka jush! - Optymalizator Grafiku Pickerów DS",
     page_icon="⚡",
     layout="wide",
 )
 
-# --- STYLIZACJA W BRANDINGU JUSH! (CSS) ---
+# --- STYLIZACJA W DOKŁADNEJ PALECIE JUSH! (CSS) ---
 st.markdown(
     """
     <style>
-    /* Kolorystyka i Styl Jush! */
+    /* Kolorystyka z oficjalnego brandbooka Jush! */
     :root {
-        --jush-green: #00E600;
-        --jush-dark: #0A0F1D;
-        --jush-purple: #7E22CE;
-        --jush-light-green: #DCFCE7;
+        --jush-lime: #8BC53F;
+        --jush-dark-green: #005B2B;
+        --jush-light-lime: #EBF7D4;
+        --jush-bg: #F5FAEB;
+    }
+    
+    /* Główne tło aplikacji */
+    .stApp {
+        background-color: #FAFCF5;
     }
     
     /* Pasek boczny */
     [data-testid="stSidebar"] {
-        background-color: #0F172A !important;
-        color: white !important;
+        background-color: #8BC53F !important;
     }
     [data-testid="stSidebar"] * {
-        color: white !important;
+        color: #005B2B !important;
+        font-weight: bold !important;
     }
     
-    /* Przycisk główny (Jush Green) */
+    /* Przycisk główny (Ciemna zieleń z zielonym napisem) */
     div.stButton > button:first-child {
-        background-color: #00E600 !important;
-        color: #000000 !important;
-        font-weight: bold !important;
-        font-size: 18px !important;
-        border-radius: 12px !important;
+        background-color: #005B2B !important;
+        color: #8BC53F !important;
+        font-weight: 900 !important;
+        font-size: 19px !important;
+        border-radius: 14px !important;
         border: none !important;
-        padding: 12px 28px !important;
-        box-shadow: 0px 4px 14px rgba(0, 230, 0, 0.4) !important;
+        padding: 12px 30px !important;
+        box-shadow: 0px 4px 14px rgba(0, 91, 43, 0.3) !important;
         transition: all 0.3s ease !important;
     }
     div.stButton > button:first-child:hover {
-        background-color: #00C800 !important;
+        background-color: #004420 !important;
+        color: #A3DF52 !important;
         transform: scale(1.02) !important;
     }
     
-    /* Nagłówki sekcji */
+    /* Nagłówki */
     h1, h2, h3 {
-        color: #0F172A !important;
+        color: #005B2B !important;
         font-family: 'Arial Black', sans-serif !important;
     }
     
-    /* Plakietki i wyróżnienia */
-    .jush-badge {
-        background-color: #00E600;
-        color: black;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-weight: bold;
-        font-size: 14px;
-        display: inline-block;
-        margin-bottom: 10px;
+    /* Karty i sekcje */
+    div[data-testid="stExpander"], div.stDataFrame {
+        border: 2px solid #8BC53F !important;
+        border-radius: 10px !important;
     }
     </style>
 """,
@@ -87,20 +87,20 @@ except ImportError:
         "❌ Brakuje biblioteki 'pulp'. Upewnij się, że dodałeś 'pulp' do pliku requirements.txt na GitHubie!"
     )
 
-# --- BRANDING JUSH! - BRAND HEADER ---
-col_logo, col_title = st.columns([1, 5])
+# --- BRANDING JUSH! - BANNER NAGŁÓWKA ---
+col_logo, col_title = st.columns([1, 4])
 with col_logo:
     st.image(
         "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png",
-        width=140,
+        width=150,
     )
 with col_title:
     st.markdown(
-        "<h1 style='margin-bottom:0;'>jush! <span style='color:#00E600;'>DS Scheduler</span></h1>",
+        "<h1 style='margin-bottom:0; font-size: 2.8rem;'>żabka <span style='color:#005B2B;'>jush!</span></h1>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#64748B;'>Inteligentny system optymalizacji grafików dla Dark Store'ów Jush!</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator Grafiku Pickerów (Dark Store DS)</p>",
         unsafe_allow_html=True,
     )
 
@@ -108,9 +108,9 @@ st.divider()
 
 # --- SIDEBAR: PARAMETRY EFEKTYWNOŚCI I OBSADY ---
 st.sidebar.image(
-    "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=100
+    "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=120
 )
-st.sidebar.header("⚙️ Parametry Magazynu DS")
+st.sidebar.header("⚙️ Ustawienia Magazynu DS")
 
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
@@ -214,15 +214,15 @@ if uploaded_file:
                 sr_h = sum(vals) / len(vals) if vals else 0
                 srednie_godzinowe[d_nazwa][h] = sr_h
 
-        st.success("⚡ Raport Lookera zweryfikowany pomyślnie!")
+        st.success("⚡ Raport Lookera przetworzony pomyślnie!")
 
     except Exception as e:
         st.error(f"Błąd odczytu pliku z Lookera: {e}")
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
-st.header("3. Zespół Curierów & Kurierów DS")
+st.header("3. Zespół Pickerów DS")
 pracownicy_input = st.text_area(
-    "Lista kurierów / pickerów (każdy w nowej linii):",
+    "Lista pickerów na zlecenie (każdy w nowej linii):",
     "Aval01204VasinA\nAval01209KushnY\nAvalZhukoD\nDive01202VitalD\nEter01203SavchV\nEterZaichI",
 )
 pracownicy = [
@@ -232,11 +232,11 @@ pracownicy = [
 if "urlopy_list" not in st.session_state:
     st.session_state.urlopy_list = []
 
-st.subheader("Niedostępność kuriera:")
+st.subheader("Niedostępność pickera:")
 col_p, col_u1, col_u2, col_btn = st.columns([2, 2, 2, 1])
 
 with col_p:
-    p_select = st.selectbox("Pracownik", pracownicy if pracownicy else ["-"])
+    p_select = st.selectbox("Picker", pracownicy if pracownicy else ["-"])
 with col_u1:
     u_start = st.date_input("Start wolnego", datetime.now().date())
 with col_u2:
@@ -255,13 +255,13 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU DLA DS JUSH! ---
-st.header("4. Optymalizacja Grafiku")
-if st.button("🚀 Wygeneruj Grafik Jush!", type="primary"):
+# --- 4. GENEROWANIE GRAFIKU Z LOGIKĄ JUSH! ---
+st.header("4. Generowanie Grafiku Pickerów")
+if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
     if not uploaded_file:
         st.error("Proszę najpierw wgrać plik z Lookera!")
     elif not pracownicy:
-        st.error("Proszę wpisać listę pracowników!")
+        st.error("Proszę wpisać listę pickerów!")
     else:
         try:
             wymagani_pracownicy_h = {}
@@ -445,14 +445,14 @@ if st.button("🚀 Wygeneruj Grafik Jush!", type="primary"):
 
             if pulp.LpStatus[status] != "Optimal":
                 st.error(
-                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU JUSH! Reguły (4-5 dni pracy, 12h odpoczynku, obsługa spływu Lookera) "
-                    "oraz urlopy uniemożliwiają ułożenie grafiku. Dodaj więcej pracowników na zlecenie."
+                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU! Wymagania (4-5 dni pracy, 12h odpoczynku, spływ z Lookera) "
+                    "oraz urlopy uniemożliwiają wyliczenie optymalnego grafiku. Dodaj więcej pickerów."
                 )
             else:
-                # --- EXCEL STYLIZOWANY W BARWACH JUSH! ---
+                # --- EXCEL W KOLORACH LIMONKOWEJ ZIELENI JUSH! ---
                 wb = openpyxl.Workbook()
                 ws = wb.active
-                ws.title = "Grafik Jush"
+                ws.title = "Grafik jush"
                 ws.freeze_panes = "B3"
 
                 font_bold = Font(name="Calibri", size=10, bold=True)
@@ -467,30 +467,30 @@ if st.button("🚀 Wygeneruj Grafik Jush!", type="primary"):
                     bottom=Side(style="thin", color="D3D3D3"),
                 )
 
-                # PALETA JUSH!
+                # DOKŁADNA PALETA JUSH! Z GRAFIKI
                 fill_header_main = PatternFill(
-                    start_color="3B0764", end_color="3B0764", fill_type="solid"
-                )  # Głęboki fiolet Jush
+                    start_color="005B2B", end_color="005B2B", fill_type="solid"
+                )  # Ciemna zieleń jush!
                 font_header_main = Font(
                     name="Calibri", size=10, bold=True, color="FFFFFF"
                 )
 
                 fill_header_sub = PatternFill(
-                    start_color="6B21A8", end_color="6B21A8", fill_type="solid"
-                )  # Jasny fiolet
+                    start_color="8BC53F", end_color="8BC53F", fill_type="solid"
+                )  # Limonkowa zieleń jush!
                 font_header_sub = Font(
-                    name="Calibri", size=10, bold=True, color="FFFFFF"
+                    name="Calibri", size=10, bold=True, color="005B2B"
                 )
 
                 fill_summary = PatternFill(
-                    start_color="E9D5FF", end_color="E9D5FF", fill_type="solid"
-                )  # Jasnofioletowe podsumowanie
+                    start_color="EBF7D4", end_color="EBF7D4", fill_type="solid"
+                )  # Bardzo jasny limonkowy
 
                 fill_total_sum = PatternFill(
-                    start_color="00E600", end_color="00E600", fill_type="solid"
-                )  # Jush Neon Green
+                    start_color="8BC53F", end_color="8BC53F", fill_type="solid"
+                )  # Limonka dla sumy całkowitej
                 font_total_sum = Font(
-                    name="Calibri", size=11, bold=True, color="000000"
+                    name="Calibri", size=11, bold=True, color="005B2B"
                 )
 
                 fill_date_weekend = PatternFill(
@@ -502,10 +502,10 @@ if st.button("🚀 Wygeneruj Grafik Jush!", type="primary"):
 
                 fill_shift_morning = PatternFill(
                     start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"
-                )  # Soczysta zieleń poranków
+                )  # Jasna świeża zieleń
                 fill_shift_afternoon = PatternFill(
                     start_color="FEF08A", end_color="FEF08A", fill_type="solid"
-                )  # Ciepły żółty popołudnia
+                )  # Żółty akcent popołudniowy
 
                 ws.merge_cells("A1:A2")
                 ws["A1"] = "pl-waw-12"
@@ -665,13 +665,13 @@ if st.button("🚀 Wygeneruj Grafik Jush!", type="primary"):
                 wb.save(buffer)
 
                 st.success(
-                    "⚡ Grafik Jush! wygenerowany pomyślnie! Zachowano zasady 4-5 dni pracy, 12h odpoczynku oraz wybalansowane otwarcia i zamknięcia."
+                    "⚡ Grafik pickerów żabka jush! wygenerowany pomyślnie!"
                 )
 
                 st.download_button(
-                    label="📥 Pobierz Grafik Jush! (.xlsx)",
+                    label="📥 Pobierz Grafik Pickerów (.xlsx)",
                     data=buffer.getvalue(),
-                    file_name="grafik_jush_ds.xlsx",
+                    file_name="grafik_pickerzy_zabka_jush.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         except Exception as e:
