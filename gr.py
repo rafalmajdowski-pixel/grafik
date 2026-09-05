@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta
 import io
 import math
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
+import pulp
 import streamlit as st
 
 # --- KONFIGURACJA STRONY STREAMLIT ---
@@ -14,7 +17,6 @@ st.set_page_config(
 # Bezpieczne importy bibliotek
 try:
     import openpyxl
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 except ImportError:
     st.error("❌ Brakuje biblioteki 'openpyxl'. Upewnij się, że znajduje się w requirements.txt!")
 
@@ -242,9 +244,9 @@ with col_pref_type:
 
 with col_val:
     if type_opt == "Preferencja Pory Dnia":
-        val_pref = st.selectbox("Pora dnia:", ["Preferuje Poranki (06:00)", "Preferuje Zamknięcia"])
+        val_pref = st.selectbox("Pora dnia:", ["Tylko Poranki (06:00)", "Tylko Zamknięcia"])
     elif type_opt == "Modyfikacja Etatowa (+/- h)":
-        val_hours = st.number_input("Różnica godzin (np. +20 lub -30):", value=0, step=5)
+        val_hours = st.number_input("Różnica godzin (np. +110 lub -30):", value=0, step=5)
     else:
         val_dates = st.date_input("Zakres wolnego:", value=(datetime.now().date(), datetime.now().date()))
 
@@ -253,7 +255,7 @@ with col_add:
     if st.button("➕ Dodaj regułę", use_container_width=True):
         if type_opt == "Preferencja Pory Dnia":
             st.session_state.preferencje_dict[p_target] = val_pref
-            st.success(f"Dodano preferencję dla {p_target}!")
+            st.success(f"Dodano wyłączność dla {p_target}: {val_pref}!")
         elif type_opt == "Modyfikacja Etatowa (+/- h)":
             st.session_state.korekty_godzin_dict[p_target] = val_hours
             st.success(f"Skorygowano etat dla {p_target} o {val_hours}h!")
@@ -270,17 +272,17 @@ st.subheader("📋 Aktywne Ustawienia Zespołu:")
 c_pref, c_kor, c_url = st.columns(3)
 
 with c_pref:
-    st.markdown("🎯 **Preferencje Pory Dnia**")
+    st.markdown("🎯 **Rygorystyczna Pora Dnia (Wyłączność)**")
     if st.session_state.preferencje_dict:
         df_pref = pd.DataFrame(
             list(st.session_state.preferencje_dict.items()),
-            columns=["Picker", "Preferowany Zwyczaj"]
+            columns=["Picker", "Wymagana Pora Dnia"]
         )
         st.dataframe(df_pref, use_container_width=True, hide_index=True)
         if st.button("🗑️ Wyczyść preferencje", key="c1"):
             st.session_state.preferencje_dict = {}
     else:
-        st.caption("Brak ustalonych preferencji pory dnia.")
+        st.caption("Brak opcji wyłączności (standardowa rotacja).")
 
 with c_kor:
     st.markdown("⏱️ **Korekty Etatów (+/- h)**")
@@ -307,7 +309,7 @@ with c_url:
     else:
         st.caption("Brak nieobecności w grafiku.")
 
-# --- 4. GENEROWANIE GRAFIKU Z LOGIKĄ JUSH! ---
+# --- 4. GENEROWANIE GRAFIKU Z PRECYZYJNĄ LOGIKĄ ---
 st.divider()
 st.header("4. Generowanie Grafiku Pickerów")
 if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=True):
@@ -380,44 +382,30 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
             dev_minus = pulp.LpVariable.dicts(
                 "dev_minus", pracownicy, lowBound=0, cat="Continuous"
             )
-            dev_ranne = pulp.LpVariable.dicts(
-                "dev_ranne", pracownicy, lowBound=0, cat="Continuous"
-            )
-            dev_wieczor = pulp.LpVariable.dicts(
-                "dev_wieczor", pracownicy, lowBound=0, cat="Continuous"
-            )
-
-            pref_penalty = []
-            for p in pracownicy:
-                pref = st.session_state.preferencje_dict.get(p, "Brak")
-                for d in dni_zakresu:
-                    if pref == "Preferuje Poranki (06:00)":
-                        pref_penalty.append(
-                            pulp.lpSum(y[p, d, s, l] for s, l in zmiany_wieczorne) * 10.0
-                        )
-                    elif pref == "Preferuje Zamknięcia":
-                        pref_penalty.append(
-                            pulp.lpSum(y[p, d, s, l] for s, l in zmiany_ranne) * 10.0
-                        )
 
             model += (
-                pulp.lpSum(
-                    dev_plus[p]
-                    + dev_minus[p]
-                    + 2.0 * dev_ranne[p]
-                    + 2.0 * dev_wieczor[p]
-                    for p in pracownicy
-                )
+                pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
                 + pulp.lpSum(
-                    1000.0 * penalty_rest_12h[p, d]
-                    + 500.0 * penalty_cadence[p, d]
+                    1000.0 * penalty_rest_12h[p, d] + 500.0 * penalty_cadence[p, d]
                     for p in pracownicy
                     for d in dni_zakresu
                 )
-                + pulp.lpSum(pref_penalty)
             )
 
             for p in pracownicy:
+                pref = st.session_state.preferencje_dict.get(p, "Brak")
+
+                # SZTYWNA BLOKADA ZMIAN NIEZGODNYCH Z WYŁĄCZNOŚCIĄ
+                for d in dni_zakresu:
+                    if pref in ["Tylko Poranki (06:00)", "Preferuje Poranki (06:00)"]:
+                        for s, l in prawidlowe_zmiany:
+                            if s != 6.0:
+                                model += y[p, d, s, l] == 0
+                    elif pref in ["Tylko Zamknięcia", "Preferuje Zamknięcia"]:
+                        for s, l in prawidlowe_zmiany:
+                            if (s + l) != godzina_zamkniecia_ds:
+                                model += y[p, d, s, l] == 0
+
                 dni_absencji = sum(
                     1
                     for d in dni_zakresu
@@ -438,21 +426,21 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
                     for s, l in prawidlowe_zmiany
                 )
 
-                model += suma_h_p <= target_p + 15.0
-                model += suma_h_p >= target_p - 15.0
+                model += suma_h_p <= target_p + 10.0
+                model += suma_h_p >= target_p - 10.0
                 model += suma_h_p + dev_minus[p] - dev_plus[p] == target_p
 
-                num_ranne = pulp.lpSum(
-                    y[p, d, s, l] for d in dni_zakresu for s, l in zmiany_ranne
-                )
-                num_wieczorne = pulp.lpSum(
-                    y[p, d, s, l]
-                    for d in dni_zakresu
-                    for s, l in zmiany_wieczorne
-                )
-
-                model += num_ranne - num_wieczorne <= 3.0 + dev_ranne[p]
-                model += num_wieczorne - num_ranne <= 3.0 + dev_wieczor[p]
+                # RÓWNOMIERNY ROZKŁAD WYSOKICH ETATÓW W UJĘCIU TYGODNIOWYM (MINIMIZACJA DZIUR)
+                num_weeks = max(1, math.ceil(len(dni_zakresu) / 7.0))
+                weekly_target = target_p / num_weeks
+                for w in range(num_weeks):
+                    week_days = dni_zakresu[w*7 : min((w+1)*7, len(dni_zakresu))]
+                    suma_h_week = pulp.lpSum(
+                        y[p, d, s, l] * l
+                        for d in week_days
+                        for s, l in prawidlowe_zmiany
+                    )
+                    model += suma_h_week <= weekly_target + 12.0
 
                 for idx_d, d in enumerate(dni_zakresu):
                     model += (
