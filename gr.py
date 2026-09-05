@@ -195,7 +195,7 @@ if uploaded_file:
         st.error(f"Błąd odczytu pliku z Lookera: {e}")
 
 # --- 3. PRACOWNICI, PREFERENCJE I KALENDARZ URLOPOWY ---
-st.header("3. Zespół Pickerów DS & Preferencje Zmianowe")
+st.header("3. Zespół Pickerów DS & Indywidualne Ustawienia")
 
 pracownicy_default = [
     "Aval01204VasinA",
@@ -206,48 +206,85 @@ pracownicy_default = [
     "EterZaichI",
 ]
 pracownicy_input = st.text_area(
-    "Lista pickerów (każdy w nowej linii):",
+    "Lista pickerów na zlecenie (każdy w nowej linii):",
     "\n".join(pracownicy_default),
 )
 pracownicy = [
     p.strip() for p in pracownicy_input.split("\n") if p.strip() != ""
 ]
 
-st.subheader("Ustawienia Preferencji i Nieobecności Pickerów:")
-col_pref, col_u1, col_u2 = st.columns([3, 2, 2])
-
-preferencje_pickerow = {}
-with col_pref:
-    st.write("🎯 **Preferowana pora dnia:**")
-    for p in pracownicy:
-        preferencje_pickerow[p] = st.selectbox(
-            f"Preferencja: {p}",
-            ["Brak (Rotacyjny)", "Preferuje Poranki (06:00)", "Preferuje Zamknięcia"],
-            key=f"pref_{p}",
-        )
-
+# INICJALIZACJA SESSION STATE DLA ZASĄD INDYWIDUALNYCH
+if "preferencje_dict" not in st.session_state:
+    st.session_state.preferencje_dict = {}
+if "korekty_godzin_dict" not in st.session_state:
+    st.session_state.korekty_godzin_dict = {}
 if "urlopy_list" not in st.session_state:
     st.session_state.urlopy_list = []
 
-with col_u1:
-    p_select = st.selectbox("Wyznacz nieobecność dla:", pracownicy if pracownicy else ["-"])
-    u_start = st.date_input("Start wolnego", datetime.now().date())
-with col_u2:
-    st.write("")
-    st.write("")
-    u_end = st.date_input("Koniec wolnego", datetime.now().date())
-    if st.button("➕ Dodaj wolne"):
-        st.session_state.urlopy_list.append(
-            {"Pracownik": p_select, "Od": u_start, "Do": u_end}
+st.subheader("➕ Dodaj Preferencję / Limity / Wolne dla Pickera")
+
+with st.expander("🛠️ Panel Dodawania Wymagań dla Wybranego Pickera", expanded=True):
+    col_sel, col_pref_type, col_val, col_add = st.columns([2, 3, 2, 1])
+    
+    with col_sel:
+        p_target = st.selectbox("Wybierz pickera:", pracownicy if pracownicy else ["-"])
+    with col_pref_type:
+        type_opt = st.selectbox(
+            "Rodzaj dodawanego ustawienia:",
+            ["Preferencja Pory Dnia", "Modyfikacja Etatowa (+/- h)", "Nieobecność / Urlop (Całe Dni)"]
         )
+    with col_val:
+        if type_opt == "Preferencja Pory Dnia":
+            val_pref = st.selectbox("Pora dnia:", ["Preferuje Poranki (06:00)", "Preferuje Zamknięcia"])
+        elif type_opt == "Modyfikacja Etatowa (+/- h)":
+            val_hours = st.number_input("Różnica godzin (np. +20 lub -30):", value=0, step=5)
+        else:
+            val_dates = st.date_input("Zakres wolnego:", value=(datetime.now().date(), datetime.now().date()))
+            
+    with col_add:
+        st.write("")
+        st.write("")
+        if st.button(" Dodaj"):
+            if type_opt == "Preferencja Pory Dnia":
+                st.session_state.preferencje_dict[p_target] = val_pref
+            elif type_opt == "Modyfikacja Etatowa (+/- h)":
+                st.session_state.korekty_godzin_dict[p_target] = val_hours
+            else:
+                if isinstance(val_dates, tuple) and len(val_dates) == 2:
+                    st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[1]})
+                elif isinstance(val_dates, tuple) and len(val_dates) == 1:
+                    st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[0]})
 
-if st.session_state.urlopy_list:
+# PODSUMOWANIE DODANYCH ZASĄD
+c_list1, c_list2, c_list3 = st.columns(3)
+with c_list1:
+    st.write("🎯 **Zapisane preferencje pory dnia:**")
+    if st.session_state.preferencje_dict:
+        st.json(st.session_state.preferencje_dict)
+        if st.button("🗑️ Wyczyść preferencje"):
+            st.session_state.preferencje_dict = {}
+    else:
+        st.caption("Brak ustalonych preferencji.")
+
+with c_list2:
+    st.write("⏱️ **Zapisane korekty etatów (+/- h):**")
+    if st.session_state.korekty_godzin_dict:
+        st.json(st.session_state.korekty_godzin_dict)
+        if st.button("🗑️ Wyczyść korekty etatów"):
+            st.session_state.korekty_godzin_dict = {}
+    else:
+        st.caption("Brak skorygowanych etatów.")
+
+with c_list3:
     st.write("📋 **Zarejestrowane nieobecności:**")
-    st.dataframe(pd.DataFrame(st.session_state.urlopy_list))
-    if st.button("🗑️ Wyczyść listę wolnych"):
-        st.session_state.urlopy_list = []
+    if st.session_state.urlopy_list:
+        st.dataframe(pd.DataFrame(st.session_state.urlopy_list))
+        if st.button("🗑️ Wyczyść nieobecności"):
+            st.session_state.urlopy_list = []
+    else:
+        st.caption("Brak zarejestrowanych nieobecności.")
 
-# --- 4. GENEROWANIE GRAFIKU DLA DS ---
+# --- 4. GENEROWANIE GRAFIKU Z LOGIKĄ JUSH! ---
 st.header("4. Generowanie Grafiku Pickerów")
 if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
     if not uploaded_file:
@@ -326,10 +363,9 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
                 "dev_wieczor", pracownicy, lowBound=0, cat="Continuous"
             )
 
-            # UWZGLĘDNIE KARY ZA NIEZGODNOŚĆ Z PREFERENCJAMI PICKERA
             pref_penalty = []
             for p in pracownicy:
-                pref = preferencje_pickerow.get(p, "Brak (Rotacyjny)")
+                pref = st.session_state.preferencje_dict.get(p, "Brak")
                 for d in dni_zakresu:
                     if pref == "Preferuje Poranki (06:00)":
                         pref_penalty.append(
@@ -368,9 +404,10 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
                 )
                 dni_dostepne = max(1, len(dni_zakresu) - dni_absencji)
                 proporcja = dni_dostepne / len(dni_zakresu)
-                target_p = (
-                    total_required_hours / len(pracownicy)
-                ) * proporcja
+                
+                # UWZGLĘDNIE INDYWIDUALNEJ KOREKTY GODZINOWEJ (+/- h)
+                korekta_h = st.session_state.korekty_godzin_dict.get(p, 0)
+                target_p = ((total_required_hours / len(pracownicy)) * proporcja) + korekta_h
 
                 suma_h_p = pulp.lpSum(
                     y[p, d, s, l] * l
@@ -458,7 +495,6 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
 
             status = model.solve(pulp.PULP_CBC_CMD(msg=False))
 
-            # ZAPIS DO SESSION STATE POD INTERAKTYWNY EDYTOR I EXCEL
             st.session_state.schedule_generated = True
             st.session_state.pracownicy = pracownicy
             st.session_state.dni_zakresu = dni_zakresu
@@ -468,16 +504,6 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
                 for p in pracownicy
                 for d in dni_zakresu
                 for s, l in prawidlowe_zmiany
-            }
-            st.session_state.penalty_rest = {
-                (p, d): penalty_rest_12h[p, d].varValue
-                for p in pracownicy
-                for d in dni_zakresu
-            }
-            st.session_state.penalty_cad = {
-                (p, d): penalty_cadence[p, d].varValue
-                for p in pracownicy
-                for d in dni_zakresu
             }
             st.session_state.wymagani_h = wymagani_pracownicy_h
 
@@ -499,7 +525,6 @@ if st.session_state.get("schedule_generated", False):
         m_int = int(round((h_float - int(h_float)) * 60))
         return f"{h_int:02d}:{m_int:02d}"
 
-    # BUDOWANIE STRUKTURY DANYCH POD INTERAKTYWNY EDYTOR (st.data_editor)
     data_rows = []
     for d in dni_zakresu:
         row = {"Data": d.strftime("%d/%m/%Y"), "Dzień": MAPA_DNI.get(d.strftime("%A"), "")}
@@ -519,19 +544,16 @@ if st.session_state.get("schedule_generated", False):
 
     edited_df = st.data_editor(df_editor, num_rows="fixed", use_container_width=True)
 
-    # --- ANALITYKA I WYKRESY (PUNKT 4) ---
     st.subheader("📊 Dashboard Obsady i Sprawiedliwości Pickerów")
     tab1, tab2 = st.tabs(["📈 Pokrycie Zamówień w Dobie", "⚖️ Balans Godzin i Zmian"])
 
     with tab1:
-        st.write("Porównanie wymaganej liczby pickerów z wynikającą z grafiku:")
         selected_day_str = st.selectbox("Wybierz dzień do analizy:", [d.strftime("%d/%m/%Y") for d in dni_zakresu])
         sel_date = next(d for d in dni_zakresu if d.strftime("%d/%m/%Y") == selected_day_str)
 
         req_hours = st.session_state.wymagani_h.get(sel_date, {})
         actual_hours = {h: 0 for h in range(26)}
 
-        # Przeliczanie rzeczywistej obsady na podstawie tabeli
         for p in pracownicy:
             val = edited_df.loc[edited_df["Data"] == selected_day_str, p].values[0]
             if str(val).strip() != "OFF" and "-" in str(val):
@@ -555,7 +577,6 @@ if st.session_state.get("schedule_generated", False):
         st.bar_chart(chart_data)
 
     with tab2:
-        st.write("Łączne podsumowanie roboczogodzin (RH) dla każdego pickera:")
         worker_totals = {p: 0.0 for p in pracownicy}
         for p in pracownicy:
             for _, r in edited_df.iterrows():
@@ -574,10 +595,8 @@ if st.session_state.get("schedule_generated", False):
         df_totals = pd.DataFrame(list(worker_totals.items()), columns=["Picker", "Suma Godzin (RH)"]).set_index("Picker")
         st.bar_chart(df_totals)
 
-    # --- POBIERANIE DOCIELOWEGO EXCELA Z KOLORAMI JUSH! ---
     st.subheader("📥 Eksport do Pliku Excel")
     
-    # Generowanie otwartego Excela z uwzględnieniem ewentualnych poprawek z edytora
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Grafik jush"
