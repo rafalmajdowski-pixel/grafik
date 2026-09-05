@@ -36,21 +36,29 @@ st.markdown(
         font-weight: bold !important;
     }
     
-    div.stButton > button:first-child {
+    div.stButton > button {
         background-color: #005B2B !important;
         color: #8BC53F !important;
-        font-weight: 900 !important;
-        font-size: 19px !important;
-        border-radius: 14px !important;
+        font-weight: 800 !important;
+        font-size: 16px !important;
+        border-radius: 12px !important;
         border: none !important;
-        padding: 12px 30px !important;
-        box-shadow: 0px 4px 14px rgba(0, 91, 43, 0.3) !important;
-        transition: all 0.3s ease !important;
+        padding: 10px 24px !important;
+        transition: all 0.2s ease !important;
     }
-    div.stButton > button:first-child:hover {
+    div.stButton > button:hover {
         background-color: #004420 !important;
         color: #A3DF52 !important;
-        transform: scale(1.02) !important;
+    }
+    
+    /* Karty ustawień */
+    .rule-card {
+        background-color: white;
+        border: 2px solid #8BC53F;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
     
     h1, h2, h3 {
@@ -67,15 +75,15 @@ col_logo, col_title = st.columns([1, 4])
 with col_logo:
     st.image(
         "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png",
-        width=150,
+        width=140,
     )
 with col_title:
     st.markdown(
-        "<h1 style='margin-bottom:0; font-size: 2.8rem;'>żabka <span style='color:#005B2B;'>jush!</span></h1>",
+        "<h1 style='margin-bottom:0; font-size: 2.6rem;'>żabka <span style='color:#005B2B;'>jush!</span></h1>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator Grafiku Pickerów z Edytorem na Żywo & Analityką Obsady</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator Grafiku Pickerów DS</p>",
         unsafe_allow_html=True,
     )
 
@@ -83,7 +91,7 @@ st.divider()
 
 # --- SIDEBAR: PARAMETRY EFEKTYWNOŚCI I OBSADY ---
 st.sidebar.image(
-    "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=120
+    "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=110
 )
 st.sidebar.header("⚙️ Ustawienia Magazynu DS")
 
@@ -91,7 +99,7 @@ typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
 
 godzina_otwarcia_ds = 6.0
-godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
+godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
 max_godzina_zamowien = 25 if is_nocny else 23
 
 cel_efektywnosci = st.sidebar.number_input(
@@ -194,8 +202,8 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Błąd odczytu pliku z Lookera: {e}")
 
-# --- 3. PRACOWNICI, PREFERENCJE I KALENDARZ URLOPOWY ---
-st.header("3. Zespół Pickerów DS & Indywidualne Ustawienia")
+# --- 3. PRACOWNICI & PRZEJRZYSTE USTAWIENIA ---
+st.header("3. Zespół Pickerów DS & Indywidualne Reguły")
 
 pracownicy_default = [
     "Aval01204VasinA",
@@ -206,7 +214,7 @@ pracownicy_default = [
     "EterZaichI",
 ]
 pracownicy_input = st.text_area(
-    "Lista pickerów na zlecenie (każdy w nowej linii):",
+    "Lista pickerów (każdy w nowej linii):",
     "\n".join(pracownicy_default),
 )
 pracownicy = [
@@ -221,72 +229,94 @@ if "korekty_godzin_dict" not in st.session_state:
 if "urlopy_list" not in st.session_state:
     st.session_state.urlopy_list = []
 
-st.subheader("➕ Dodaj Preferencję / Limity / Wolne dla Pickera")
+st.subheader("➕ Ustawienia dla Wybranego Pickera")
 
-with st.expander("🛠️ Panel Dodawania Wymagań dla Wybranego Pickera", expanded=True):
-    col_sel, col_pref_type, col_val, col_add = st.columns([2, 3, 2, 1])
-    
-    with col_sel:
-        p_target = st.selectbox("Wybierz pickera:", pracownicy if pracownicy else ["-"])
-    with col_pref_type:
-        type_opt = st.selectbox(
-            "Rodzaj dodawanego ustawienia:",
-            ["Preferencja Pory Dnia", "Modyfikacja Etatowa (+/- h)", "Nieobecność / Urlop (Całe Dni)"]
-        )
-    with col_val:
+# OTWARTY, CZYSTY FORMULARZ (BEZ EXPANDERA)
+col_sel, col_pref_type, col_val, col_add = st.columns([2, 3, 2, 2])
+
+with col_sel:
+    p_target = st.selectbox("Wybierz pickera:", pracownicy if pracownicy else ["-"])
+
+with col_pref_type:
+    type_opt = st.selectbox(
+        "Rodzaj dodawanego ustawienia:",
+        ["Preferencja Pory Dnia", "Modyfikacja Etatowa (+/- h)", "Nieobecność / Urlop (Całe Dni)"]
+    )
+
+with col_val:
+    if type_opt == "Preferencja Pory Dnia":
+        val_pref = st.selectbox("Pora dnia:", ["Preferuje Poranki (06:00)", "Preferuje Zamknięcia"])
+    elif type_opt == "Modyfikacja Etatowa (+/- h)":
+        val_hours = st.number_input("Różnica godzin (np. +20 lub -30):", value=0, step=5)
+    else:
+        val_dates = st.date_input("Zakres wolnego:", value=(datetime.now().date(), datetime.now().date()))
+
+with col_add:
+    st.write("&nbsp;")
+    if st.button("➕ Dodaj regułę", use_container_width=True):
         if type_opt == "Preferencja Pory Dnia":
-            val_pref = st.selectbox("Pora dnia:", ["Preferuje Poranki (06:00)", "Preferuje Zamknięcia"])
+            st.session_state.preferencje_dict[p_target] = val_pref
+            st.toast(f"Dodano preferencję dla {p_target}!", icon="🎯")
         elif type_opt == "Modyfikacja Etatowa (+/- h)":
-            val_hours = st.number_input("Różnica godzin (np. +20 lub -30):", value=0, step=5)
+            st.session_state.korekty_godzin_dict[p_target] = val_hours
+            st.toast(f"Skorygowano etat dla {p_target} o {val_hours}h!", icon="⏱️")
         else:
-            val_dates = st.date_input("Zakres wolnego:", value=(datetime.now().date(), datetime.now().date()))
-            
-    with col_add:
-        st.write("")
-        st.write("")
-        if st.button(" Dodaj"):
-            if type_opt == "Preferencja Pory Dnia":
-                st.session_state.preferencje_dict[p_target] = val_pref
-            elif type_opt == "Modyfikacja Etatowa (+/- h)":
-                st.session_state.korekty_godzin_dict[p_target] = val_hours
-            else:
-                if isinstance(val_dates, tuple) and len(val_dates) == 2:
-                    st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[1]})
-                elif isinstance(val_dates, tuple) and len(val_dates) == 1:
-                    st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[0]})
+            if isinstance(val_dates, tuple) and len(val_dates) == 2:
+                st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[1]})
+            elif isinstance(val_dates, tuple) and len(val_dates) == 1:
+                st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[0]})
+            st.toast(f"Zarejestrowano nieobecność dla {p_target}!", icon="📋")
 
-# PODSUMOWANIE DODANYCH ZASĄD
-c_list1, c_list2, c_list3 = st.columns(3)
-with c_list1:
-    st.write("🎯 **Zapisane preferencje pory dnia:**")
+# CZYTELNE TABELE ZAMIAST CZARNEGO JSON-A
+st.write("---")
+st.subheader("📋 Aktywne Ustawienia Zespołu:")
+
+c_pref, c_kor, c_url = st.columns(3)
+
+with c_pref:
+    st.markdown("🎯 **Preferencje Pory Dnia**")
     if st.session_state.preferencje_dict:
-        st.json(st.session_state.preferencje_dict)
-        if st.button("🗑️ Wyczyść preferencje"):
+        df_pref = pd.DataFrame(
+            list(st.session_state.preferencje_dict.items()),
+            columns=["Picker", "Preferowany Zwyczaj"]
+        )
+        st.dataframe(df_pref, use_container_width=True, hide_index=True)
+        if st.button("🗑️ Wyczyść preferencje", key="c1"):
             st.session_state.preferencje_dict = {}
+            st.rerun()
     else:
-        st.caption("Brak ustalonych preferencji.")
+        st.caption("Brak ustalonych preferencji pory dnia.")
 
-with c_list2:
-    st.write("⏱️ **Zapisane korekty etatów (+/- h):**")
+with c_kor:
+    st.markdown("⏱️ **Korekty Etatów (+/- h)**")
     if st.session_state.korekty_godzin_dict:
-        st.json(st.session_state.korekty_godzin_dict)
-        if st.button("🗑️ Wyczyść korekty etatów"):
+        df_kor = pd.DataFrame(
+            [{"Picker": k, "Zmiana Czasu": f"{v:+d}h"} for k, v in st.session_state.korekty_godzin_dict.items()]
+        )
+        st.dataframe(df_kor, use_container_width=True, hide_index=True)
+        if st.button("🗑️ Wyczyść korekty", key="c2"):
             st.session_state.korekty_godzin_dict = {}
+            st.rerun()
     else:
-        st.caption("Brak skorygowanych etatów.")
+        st.caption("Wszyscy pickerzy mają domyślny etat.")
 
-with c_list3:
-    st.write("📋 **Zarejestrowane nieobecności:**")
+with c_url:
+    st.markdown("🌴 **Nieobecności i Urlopy**")
     if st.session_state.urlopy_list:
-        st.dataframe(pd.DataFrame(st.session_state.urlopy_list))
-        if st.button("🗑️ Wyczyść nieobecności"):
+        df_url = pd.DataFrame(st.session_state.urlopy_list)
+        df_url["Od"] = df_url["Od"].apply(lambda x: x.strftime("%d/%m/%Y"))
+        df_url["Do"] = df_url["Do"].apply(lambda x: x.strftime("%d/%m/%Y"))
+        st.dataframe(df_url, use_container_width=True, hide_index=True)
+        if st.button("🗑️ Wyczyść urlopy", key="c3"):
             st.session_state.urlopy_list = []
+            st.rerun()
     else:
-        st.caption("Brak zarejestrowanych nieobecności.")
+        st.caption("Brak nieobecności w grafiku.")
 
 # --- 4. GENEROWANIE GRAFIKU Z LOGIKĄ JUSH! ---
+st.divider()
 st.header("4. Generowanie Grafiku Pickerów")
-if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
+if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=True):
     if not uploaded_file:
         st.error("Proszę najpierw wgrać plik z Lookera!")
     elif not pracownicy:
@@ -405,7 +435,6 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
                 dni_dostepne = max(1, len(dni_zakresu) - dni_absencji)
                 proporcja = dni_dostepne / len(dni_zakresu)
                 
-                # UWZGLĘDNIE INDYWIDUALNEJ KOREKTY GODZINOWEJ (+/- h)
                 korekta_h = st.session_state.korekty_godzin_dict.get(p, 0)
                 target_p = ((total_required_hours / len(pracownicy)) * proporcja) + korekta_h
 
@@ -513,7 +542,7 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary"):
 # --- 5. INTERAKTYWNY PODGLĄD, EDYTOR NA ŻYWO I ANALITYKA ---
 if st.session_state.get("schedule_generated", False):
     st.divider()
-    st.header("5. Interaktywny Podgląd Grafiku & Analityka Obsady DS")
+    st.header("5. Podgląd Grafiku & Analityka Obsady DS")
 
     pracownicy = st.session_state.pracownicy
     dni_zakresu = st.session_state.dni_zakresu
@@ -539,13 +568,13 @@ if st.session_state.get("schedule_generated", False):
 
     df_editor = pd.DataFrame(data_rows)
 
-    st.subheader("📝 Interaktywna Tabela Grafiku (Edytuj bezpośrednio w komórce):")
-    st.info("💡 Możesz ręcznie modyfikować godziny (np. wpisać '06:00 - 14:00' lub 'OFF'). Zmiany przeliczą się w czasie rzeczywistym!")
+    st.subheader("📝 Edytuj grafik na żywo:")
+    st.info("💡 Kliknij w dowolną komórkę, aby zmienić godziny pracy (np. '06:00 - 14:00' lub 'OFF'). Zmiany zaktualizują wykresy i plik Excel.")
 
     edited_df = st.data_editor(df_editor, num_rows="fixed", use_container_width=True)
 
-    st.subheader("📊 Dashboard Obsady i Sprawiedliwości Pickerów")
-    tab1, tab2 = st.tabs(["📈 Pokrycie Zamówień w Dobie", "⚖️ Balans Godzin i Zmian"])
+    st.subheader("📊 Analityka Obsady i Godzin Pickerów")
+    tab1, tab2 = st.tabs(["📈 Pokrycie Zamówień w Dobie", "⚖️ Suma Godzin Pickerów"])
 
     with tab1:
         selected_day_str = st.selectbox("Wybierz dzień do analizy:", [d.strftime("%d/%m/%Y") for d in dni_zakresu])
@@ -697,8 +726,9 @@ if st.session_state.get("schedule_generated", False):
     wb.save(buffer)
 
     st.download_button(
-        label="📥 Pobierz Zaktualizowany Grafik Excel (.xlsx)",
+        label="📥 Pobierz Gotowy Grafik Excel (.xlsx)",
         data=buffer.getvalue(),
-        file_name="grafik_pickerzy_jush_edytowany.xlsx",
+        file_name="grafik_pickerzy_jush.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
     )
