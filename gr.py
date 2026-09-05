@@ -4,8 +4,74 @@ import math
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Optymalizator Grafiku Magazynu", layout="wide")
+# --- KONFIGURACJA STRONY STREAMLIT ---
+st.set_page_config(
+    page_title="Jush! - Optymalizator Grafiku Magazynu (DS)",
+    page_icon="⚡",
+    layout="wide",
+)
 
+# --- STYLIZACJA W BRANDINGU JUSH! (CSS) ---
+st.markdown(
+    """
+    <style>
+    /* Kolorystyka i Styl Jush! */
+    :root {
+        --jush-green: #00E600;
+        --jush-dark: #0A0F1D;
+        --jush-purple: #7E22CE;
+        --jush-light-green: #DCFCE7;
+    }
+    
+    /* Pasek boczny */
+    [data-testid="stSidebar"] {
+        background-color: #0F172A !important;
+        color: white !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+    
+    /* Przycisk główny (Jush Green) */
+    div.stButton > button:first-child {
+        background-color: #00E600 !important;
+        color: #000000 !important;
+        font-weight: bold !important;
+        font-size: 18px !important;
+        border-radius: 12px !important;
+        border: none !important;
+        padding: 12px 28px !important;
+        box-shadow: 0px 4px 14px rgba(0, 230, 0, 0.4) !important;
+        transition: all 0.3s ease !important;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #00C800 !important;
+        transform: scale(1.02) !important;
+    }
+    
+    /* Nagłówki sekcji */
+    h1, h2, h3 {
+        color: #0F172A !important;
+        font-family: 'Arial Black', sans-serif !important;
+    }
+    
+    /* Plakietki i wyróżnienia */
+    .jush-badge {
+        background-color: #00E600;
+        color: black;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 14px;
+        display: inline-block;
+        margin-bottom: 10px;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
+# Bezpieczne importy bibliotek
 try:
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -21,10 +87,30 @@ except ImportError:
         "❌ Brakuje biblioteki 'pulp'. Upewnij się, że dodałeś 'pulp' do pliku requirements.txt na GitHubie!"
     )
 
-st.title("📦 Optymalizator Grafiku Magazynu")
+# --- BRANDING JUSH! - BRAND HEADER ---
+col_logo, col_title = st.columns([1, 5])
+with col_logo:
+    st.image(
+        "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png",
+        width=140,
+    )
+with col_title:
+    st.markdown(
+        "<h1 style='margin-bottom:0;'>jush! <span style='color:#00E600;'>DS Scheduler</span></h1>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='font-weight:bold; color:#64748B;'>Inteligentny system optymalizacji grafików dla Dark Store'ów Jush!</p>",
+        unsafe_allow_html=True,
+    )
+
+st.divider()
 
 # --- SIDEBAR: PARAMETRY EFEKTYWNOŚCI I OBSADY ---
-st.sidebar.header("⚙️ Parametry Magazynu")
+st.sidebar.image(
+    "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=100
+)
+st.sidebar.header("⚙️ Parametry Magazynu DS")
 
 typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
 is_nocny = typ_magazynu == "Nocny"
@@ -34,7 +120,9 @@ godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5  # 25.5h = 01:30 w nocy
 max_godzina_zamowien = 25 if is_nocny else 23  # 25h = 01:00 w nocy
 
 cel_efektywnosci = st.sidebar.number_input(
-    "Efektywność pakowania (zamówienia / h / osoba)", min_value=1, value=15
+    "Efektywność pakowania (zamówienia / h / picker)",
+    min_value=1,
+    value=15,
 )
 
 min_zmiana = 6
@@ -67,9 +155,9 @@ else:
     dni_zakresu = [okres_grafiku[0]]
 
 # --- 2. ANALIZA GODZINOWA Z LOOKERA ---
-st.header("2. Wgraj raport z Lookera")
+st.header("2. Wgraj raport zamówień z Lookera")
 uploaded_file = st.file_uploader(
-    "Wybierz plik CSV lub Excel z Lookera", type=["csv", "xlsx"]
+    "Wybierz plik CSV lub Excel z Lookera (hourly volume)", type=["csv", "xlsx"]
 )
 
 srednie_godzinowe = {}
@@ -126,15 +214,15 @@ if uploaded_file:
                 sr_h = sum(vals) / len(vals) if vals else 0
                 srednie_godzinowe[d_nazwa][h] = sr_h
 
-        st.success("✅ Dane z Lookera przetworzone pomyślnie.")
+        st.success("⚡ Raport Lookera zweryfikowany pomyślnie!")
 
     except Exception as e:
-        st.error(f"Błąd odczytu pliku: {e}")
+        st.error(f"Błąd odczytu pliku z Lookera: {e}")
 
 # --- 3. PRACOWNICI I KALENDARZ URLOPOWY ---
-st.header("3. Dostępni Pracownicy")
+st.header("3. Zespół Curierów & Kurierów DS")
 pracownicy_input = st.text_area(
-    "Lista pracowników na zlecenie (każdy w nowej linii):",
+    "Lista kurierów / pickerów (każdy w nowej linii):",
     "Aval01204VasinA\nAval01209KushnY\nAvalZhukoD\nDive01202VitalD\nEter01203SavchV\nEterZaichI",
 )
 pracownicy = [
@@ -144,7 +232,7 @@ pracownicy = [
 if "urlopy_list" not in st.session_state:
     st.session_state.urlopy_list = []
 
-st.subheader("Niedostępność pracownika:")
+st.subheader("Niedostępność kuriera:")
 col_p, col_u1, col_u2, col_btn = st.columns([2, 2, 2, 1])
 
 with col_p:
@@ -167,9 +255,9 @@ if st.session_state.urlopy_list:
     if st.button("🗑️ Wyczyść listę wolnych"):
         st.session_state.urlopy_list = []
 
-# --- 4. GENEROWANIE GRAFIKU Z SYSTEMEM PRACY 4-5 DNI WORK / 1-2 OFF ---
-st.header("4. Generowanie Grafiku")
-if st.button("🚀 Wygeneruj Grafik", type="primary"):
+# --- 4. GENEROWANIE GRAFIKU DLA DS JUSH! ---
+st.header("4. Optymalizacja Grafiku")
+if st.button("🚀 Wygeneruj Grafik Jush!", type="primary"):
     if not uploaded_file:
         st.error("Proszę najpierw wgrać plik z Lookera!")
     elif not pracownicy:
@@ -214,7 +302,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             y = pulp.LpVariable.dicts("zmiana", zmienne_zmian, cat="Binary")
 
-            # Zmienna pomocnicza: czy pracownik pracuje w dniu d (1 lub 0)
             work_day = pulp.LpVariable.dicts(
                 "work_day",
                 [(p, d) for p in pracownicy for d in dni_zakresu],
@@ -279,7 +366,6 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 model += num_wieczorne - num_ranne <= 2.0 + dev_wieczor[p]
 
                 for idx_d, d in enumerate(dni_zakresu):
-                    # Powiązanie work_day[p, d] z przydzieloną zmianą
                     model += (
                         work_day[p, d]
                         == pulp.lpSum(y[p, d, s, l] for s, l in prawidlowe_zmiany)
@@ -303,14 +389,13 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                                         <= 1
                                     )
 
-                # REGULA 1: MAX 5 DNI PRACY Z RZĘDU (w każdym oknie 6 kolejnych dni suma dni pracy <= 5)
+                # REGULA: SYSTEM 4-5 DNI WORK / 1-2 OFF
                 for idx_d in range(len(dni_zakresu) - 5):
                     window6 = [dni_zakresu[idx_d + i] for i in range(6)]
                     model += (
                         pulp.lpSum(work_day[p, d_w] for d_w in window6) <= 5
                     )
 
-                # REGULA 2: MAX 2 DNI WOLNEGO Z RZĘDU (w każdym oknie 3 kolejnych dni przynajmniej 1 dzień pracy)
                 for idx_d in range(len(dni_zakresu) - 2):
                     window3 = [dni_zakresu[idx_d + i] for i in range(3)]
                     has_vacation = any(
@@ -360,13 +445,14 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
 
             if pulp.LpStatus[status] != "Optimal":
                 st.error(
-                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU! Rygorystyczne zasady (system pracy 4-5 dni pracy / 1-2 wolne, 12h odpoczynku) "
-                    "oraz urlopy uniemożliwiają wyliczenie grafiku dla wybranej obsady. Dodaj więcej pracowników."
+                    "❌ NIE MOŻNA WYGENEROWAĆ GRAFIKU JUSH! Reguły (4-5 dni pracy, 12h odpoczynku, obsługa spływu Lookera) "
+                    "oraz urlopy uniemożliwiają ułożenie grafiku. Dodaj więcej pracowników na zlecenie."
                 )
             else:
+                # --- EXCEL STYLIZOWANY W BARWACH JUSH! ---
                 wb = openpyxl.Workbook()
                 ws = wb.active
-                ws.title = "Grafik"
+                ws.title = "Grafik Jush"
                 ws.freeze_panes = "B3"
 
                 font_bold = Font(name="Calibri", size=10, bold=True)
@@ -381,35 +467,49 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     bottom=Side(style="thin", color="D3D3D3"),
                 )
 
+                # PALETA JUSH!
                 fill_header_main = PatternFill(
-                    start_color="8EA9DB", end_color="8EA9DB", fill_type="solid"
+                    start_color="3B0764", end_color="3B0764", fill_type="solid"
+                )  # Głęboki fiolet Jush
+                font_header_main = Font(
+                    name="Calibri", size=10, bold=True, color="FFFFFF"
                 )
+
                 fill_header_sub = PatternFill(
-                    start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
+                    start_color="6B21A8", end_color="6B21A8", fill_type="solid"
+                )  # Jasny fiolet
+                font_header_sub = Font(
+                    name="Calibri", size=10, bold=True, color="FFFFFF"
                 )
+
                 fill_summary = PatternFill(
-                    start_color="B4C6E7", end_color="B4C6E7", fill_type="solid"
-                )
+                    start_color="E9D5FF", end_color="E9D5FF", fill_type="solid"
+                )  # Jasnofioletowe podsumowanie
+
                 fill_total_sum = PatternFill(
-                    start_color="70AD47", end_color="70AD47", fill_type="solid"
+                    start_color="00E600", end_color="00E600", fill_type="solid"
+                )  # Jush Neon Green
+                font_total_sum = Font(
+                    name="Calibri", size=11, bold=True, color="000000"
                 )
+
                 fill_date_weekend = PatternFill(
                     start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"
                 )
                 fill_date_weekday = PatternFill(
-                    start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
+                    start_color="F1F5F9", end_color="F1F5F9", fill_type="solid"
                 )
 
                 fill_shift_morning = PatternFill(
-                    start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"
-                )
+                    start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"
+                )  # Soczysta zieleń poranków
                 fill_shift_afternoon = PatternFill(
-                    start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"
-                )
+                    start_color="FEF08A", end_color="FEF08A", fill_type="solid"
+                )  # Ciepły żółty popołudnia
 
                 ws.merge_cells("A1:A2")
                 ws["A1"] = "pl-waw-12"
-                ws["A1"].font = font_bold
+                ws["A1"].font = font_header_main
                 ws["A1"].fill = fill_header_main
                 ws["A1"].alignment = align_center
 
@@ -430,7 +530,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     ws.merge_cells(f"{col_start_letter}1:{col_end_letter}1")
                     cell_p = ws[f"{col_start_letter}1"]
                     cell_p.value = p
-                    cell_p.font = font_bold
+                    cell_p.font = font_header_main
                     cell_p.fill = fill_header_main
                     cell_p.alignment = align_center
 
@@ -438,7 +538,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                     for i, sh in enumerate(sub_headers):
                         cell_sh = ws.cell(row=2, column=col_idx + i)
                         cell_sh.value = sh
-                        cell_sh.font = font_bold
+                        cell_sh.font = font_header_sub
                         cell_sh.fill = fill_header_sub
                         cell_sh.alignment = align_center
                         cell_sh.border = thin_border
@@ -549,9 +649,7 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 cell_grand_val.value = (
                     f"{round(grand_total_hours, 1)} Roboczogodzin (RH)"
                 )
-                cell_grand_val.font = Font(
-                    name="Calibri", size=11, bold=True, color="FFFFFF"
-                )
+                cell_grand_val.font = font_total_sum
                 cell_grand_val.fill = fill_total_sum
                 cell_grand_val.alignment = align_center
 
@@ -567,13 +665,13 @@ if st.button("🚀 Wygeneruj Grafik", type="primary"):
                 wb.save(buffer)
 
                 st.success(
-                    "✅ Grafik wygenerowany pomyślnie w uregulowanym systemie (4-5 dni pracy / 1-2 wolne)!"
+                    "⚡ Grafik Jush! wygenerowany pomyślnie! Zachowano zasady 4-5 dni pracy, 12h odpoczynku oraz wybalansowane otwarcia i zamknięcia."
                 )
 
                 st.download_button(
-                    label="📥 Pobierz Grafik (.xlsx)",
+                    label="📥 Pobierz Grafik Jush! (.xlsx)",
                     data=buffer.getvalue(),
-                    file_name="grafik_magazyn_system_4_5.xlsx",
+                    file_name="grafik_jush_ds.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         except Exception as e:
