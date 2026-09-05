@@ -1,10 +1,7 @@
 from datetime import datetime, timedelta
 import io
 import math
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
-import pulp
 import streamlit as st
 
 # --- KONFIGURACJA STRONY STREAMLIT ---
@@ -13,6 +10,18 @@ st.set_page_config(
     page_icon="⚡",
     layout="wide",
 )
+
+# Bezpieczne importy bibliotek
+try:
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+except ImportError:
+    st.error("❌ Brakuje biblioteki 'openpyxl'. Upewnij się, że znajduje się w requirements.txt!")
+
+try:
+    import pulp
+except ImportError:
+    st.error("❌ Brakuje biblioteki 'pulp'. Upewnij się, że znajduje się w requirements.txt!")
 
 # --- STYLIZACJA W PALECIE JUSH! ---
 st.markdown(
@@ -49,16 +58,6 @@ st.markdown(
     div.stButton > button:hover {
         background-color: #004420 !important;
         color: #A3DF52 !important;
-    }
-    
-    /* Karty ustawień */
-    .rule-card {
-        background-color: white;
-        border: 2px solid #8BC53F;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
     
     h1, h2, h3 {
@@ -202,7 +201,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Błąd odczytu pliku z Lookera: {e}")
 
-# --- 3. PRACOWNICI & PRZEJRZYSTE USTAWIENIA ---
+# --- 3. PRACOWNICI & USTAWIENIA INDYWIDUALNE ---
 st.header("3. Zespół Pickerów DS & Indywidualne Reguły")
 
 pracownicy_default = [
@@ -221,7 +220,6 @@ pracownicy = [
     p.strip() for p in pracownicy_input.split("\n") if p.strip() != ""
 ]
 
-# INICJALIZACJA SESSION STATE DLA ZASĄD INDYWIDUALNYCH
 if "preferencje_dict" not in st.session_state:
     st.session_state.preferencje_dict = {}
 if "korekty_godzin_dict" not in st.session_state:
@@ -231,7 +229,6 @@ if "urlopy_list" not in st.session_state:
 
 st.subheader("➕ Ustawienia dla Wybranego Pickera")
 
-# OTWARTY, CZYSTY FORMULARZ (BEZ EXPANDERA)
 col_sel, col_pref_type, col_val, col_add = st.columns([2, 3, 2, 2])
 
 with col_sel:
@@ -256,18 +253,17 @@ with col_add:
     if st.button("➕ Dodaj regułę", use_container_width=True):
         if type_opt == "Preferencja Pory Dnia":
             st.session_state.preferencje_dict[p_target] = val_pref
-            st.toast(f"Dodano preferencję dla {p_target}!", icon="🎯")
+            st.success(f"Dodano preferencję dla {p_target}!")
         elif type_opt == "Modyfikacja Etatowa (+/- h)":
             st.session_state.korekty_godzin_dict[p_target] = val_hours
-            st.toast(f"Skorygowano etat dla {p_target} o {val_hours}h!", icon="⏱️")
+            st.success(f"Skorygowano etat dla {p_target} o {val_hours}h!")
         else:
             if isinstance(val_dates, tuple) and len(val_dates) == 2:
                 st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[1]})
             elif isinstance(val_dates, tuple) and len(val_dates) == 1:
                 st.session_state.urlopy_list.append({"Pracownik": p_target, "Od": val_dates[0], "Do": val_dates[0]})
-            st.toast(f"Zarejestrowano nieobecność dla {p_target}!", icon="📋")
+            st.success(f"Zarejestrowano nieobecność dla {p_target}!")
 
-# CZYTELNE TABELE ZAMIAST CZARNEGO JSON-A
 st.write("---")
 st.subheader("📋 Aktywne Ustawienia Zespołu:")
 
@@ -283,7 +279,6 @@ with c_pref:
         st.dataframe(df_pref, use_container_width=True, hide_index=True)
         if st.button("🗑️ Wyczyść preferencje", key="c1"):
             st.session_state.preferencje_dict = {}
-            st.rerun()
     else:
         st.caption("Brak ustalonych preferencji pory dnia.")
 
@@ -296,7 +291,6 @@ with c_kor:
         st.dataframe(df_kor, use_container_width=True, hide_index=True)
         if st.button("🗑️ Wyczyść korekty", key="c2"):
             st.session_state.korekty_godzin_dict = {}
-            st.rerun()
     else:
         st.caption("Wszyscy pickerzy mają domyślny etat.")
 
@@ -304,12 +298,12 @@ with c_url:
     st.markdown("🌴 **Nieobecności i Urlopy**")
     if st.session_state.urlopy_list:
         df_url = pd.DataFrame(st.session_state.urlopy_list)
-        df_url["Od"] = df_url["Od"].apply(lambda x: x.strftime("%d/%m/%Y"))
-        df_url["Do"] = df_url["Do"].apply(lambda x: x.strftime("%d/%m/%Y"))
-        st.dataframe(df_url, use_container_width=True, hide_index=True)
+        df_url_display = df_url.copy()
+        df_url_display["Od"] = df_url_display["Od"].apply(lambda x: x.strftime("%d/%m/%Y") if hasattr(x, "strftime") else str(x))
+        df_url_display["Do"] = df_url_display["Do"].apply(lambda x: x.strftime("%d/%m/%Y") if hasattr(x, "strftime") else str(x))
+        st.dataframe(df_url_display, use_container_width=True, hide_index=True)
         if st.button("🗑️ Wyczyść urlopy", key="c3"):
             st.session_state.urlopy_list = []
-            st.rerun()
     else:
         st.caption("Brak nieobecności w grafiku.")
 
