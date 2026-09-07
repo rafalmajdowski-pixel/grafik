@@ -255,7 +255,7 @@ with col_add:
     if st.button("➕ Dodaj regułę", use_container_width=True):
         if type_opt == "Preferencja Pory Dnia":
             st.session_state.preferencje_dict[p_target] = val_pref
-            st.success(f"Dodano wyłączność dla {p_target}: {val_pref}!")
+            st.success(f"Dodano preferencję dla {p_target}!")
         elif type_opt == "Modyfikacja Etatowa (+/- h)":
             st.session_state.korekty_godzin_dict[p_target] = val_hours
             st.success(f"Skorygowano etat dla {p_target} o {val_hours}h!")
@@ -272,7 +272,7 @@ st.subheader("📋 Aktywne Ustawienia Zespołu:")
 c_pref, c_kor, c_url = st.columns(3)
 
 with c_pref:
-    st.markdown("🎯 **Rygorystyczna Pora Dnia (Wyłączność)**")
+    st.markdown("🎯 **Preferencje Pory Dnia**")
     if st.session_state.preferencje_dict:
         df_pref = pd.DataFrame(
             list(st.session_state.preferencje_dict.items()),
@@ -282,7 +282,7 @@ with c_pref:
         if st.button("🗑️ Wyczyść preferencje", key="c1"):
             st.session_state.preferencje_dict = {}
     else:
-        st.caption("Brak opcji wyłączności (standardowa rotacja).")
+        st.caption("Brak ustalonych preferencji.")
 
 with c_kor:
     st.markdown("⏱️ **Korekty Etatów (+/- h)**")
@@ -309,7 +309,7 @@ with c_url:
     else:
         st.caption("Brak nieobecności w grafiku.")
 
-# --- 4. GENEROWANIE GRAFIKU Z PRECYZYJNĄ LOGIKĄ ---
+# --- 4. GENEROWANIE GRAFIKU Z NAKAZEM OBSADY KAŻDEGO DNIA ---
 st.divider()
 st.header("4. Generowanie Grafiku Pickerów")
 if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=True):
@@ -327,6 +327,8 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
                 for h in range(max_godzina_zamowien + 1):
                     sr_zam = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
                     potrzeba_osob = math.ceil(sr_zam / cel_efektywnosci)
+                    if 6 <= h <= int(godzina_zamkniecia_ds):
+                        potrzeba_osob = max(1, potrzeba_osob)
                     wymagani_pracownicy_h[d][h] = potrzeba_osob
                     total_required_hours += potrzeba_osob
 
@@ -376,12 +378,8 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
                 cat="Binary",
             )
 
-            dev_plus = pulp.LpVariable.dicts(
-                "dev_plus", pracownicy, lowBound=0, cat="Continuous"
-            )
-            dev_minus = pulp.LpVariable.dicts(
-                "dev_minus", pracownicy, lowBound=0, cat="Continuous"
-            )
+            dev_plus = pulp.LpVariable.dicts("dev_plus", pracownicy, lowBound=0, cat="Continuous")
+            dev_minus = pulp.LpVariable.dicts("dev_minus", pracownicy, lowBound=0, cat="Continuous")
 
             model += (
                 pulp.lpSum(dev_plus[p] + dev_minus[p] for p in pracownicy)
@@ -395,7 +393,6 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
             for p in pracownicy:
                 pref = st.session_state.preferencje_dict.get(p, "Brak")
 
-                # SZTYWNA BLOKADA ZMIAN NIEZGODNYCH Z WYŁĄCZNOŚCIĄ
                 for d in dni_zakresu:
                     if pref in ["Tylko Poranki (06:00)", "Preferuje Poranki (06:00)"]:
                         for s, l in prawidlowe_zmiany:
@@ -426,21 +423,9 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
                     for s, l in prawidlowe_zmiany
                 )
 
-                model += suma_h_p <= target_p + 10.0
-                model += suma_h_p >= target_p - 10.0
+                model += suma_h_p <= target_p + 15.0
+                model += suma_h_p >= target_p - 15.0
                 model += suma_h_p + dev_minus[p] - dev_plus[p] == target_p
-
-                # RÓWNOMIERNY ROZKŁAD WYSOKICH ETATÓW W UJĘCIU TYGODNIOWYM (MINIMIZACJA DZIUR)
-                num_weeks = max(1, math.ceil(len(dni_zakresu) / 7.0))
-                weekly_target = target_p / num_weeks
-                for w in range(num_weeks):
-                    week_days = dni_zakresu[w*7 : min((w+1)*7, len(dni_zakresu))]
-                    suma_h_week = pulp.lpSum(
-                        y[p, d, s, l] * l
-                        for d in week_days
-                        for s, l in prawidlowe_zmiany
-                    )
-                    model += suma_h_week <= weekly_target + 12.0
 
                 for idx_d, d in enumerate(dni_zakresu):
                     model += (
@@ -493,16 +478,15 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
                     >= 1
                 )
 
-                for h in range(7, max_godzina_zamowien):
-                    potrzebni = wymagani_pracownicy_h[d].get(h, 0)
-                    if potrzebni > 0:
-                        pracujacy = [
-                            y[p, d, s, l]
-                            for p in pracownicy
-                            for s, l in prawidlowe_zmiany
-                            if s <= h and (s + l) >= (h + 1)
-                        ]
-                        model += pulp.lpSum(pracujacy) >= potrzebni
+                for h in range(6, int(godzina_zamkniecia_ds)):
+                    potrzebni = max(1, wymagani_pracownicy_h[d].get(h, 1))
+                    pracujacy = [
+                        y[p, d, s, l]
+                        for p in pracownicy
+                        for s, l in prawidlowe_zmiany
+                        if s <= h and (s + l) >= (h + 1)
+                    ]
+                    model += pulp.lpSum(pracujacy) >= potrzebni
 
             status = model.solve(pulp.PULP_CBC_CMD(msg=False))
 
@@ -551,12 +535,34 @@ if st.session_state.get("schedule_generated", False):
     df_editor = pd.DataFrame(data_rows)
 
     st.subheader("📝 Edytuj grafik na żywo:")
-    st.info("💡 Kliknij w dowolną komórkę, aby zmienić godziny pracy (np. '06:00 - 14:00' lub 'OFF'). Zmiany zaktualizują wykresy i plik Excel.")
+    st.info("💡 Zmiany wprowadzane w komórkach poniżej przeliczają się automatycznie na plik Excel i wykresy.")
 
     edited_df = st.data_editor(df_editor, num_rows="fixed", use_container_width=True)
 
+    worker_totals = {p: 0.0 for p in pracownicy}
+    for p in pracownicy:
+        for _, r in edited_df.iterrows():
+            val = r[p]
+            if str(val).strip() != "OFF" and "-" in str(val):
+                try:
+                    parts = str(val).split("-")
+                    h_s = float(parts[0].split(":")[0]) + float(parts[0].split(":")[1]) / 60.0
+                    h_e = float(parts[1].split(":")[0]) + float(parts[1].split(":")[1]) / 60.0
+                    if h_e < h_s:
+                        h_e += 24.0
+                    worker_totals[p] += (h_e - h_s)
+                except:
+                    pass
+
     st.subheader("📊 Analityka Obsady i Godzin Pickerów")
-    tab1, tab2 = st.tabs(["📈 Pokrycie Zamówień w Dobie", "⚖️ Suma Godzin Pickerów"])
+    
+    st.write("⏱️ **Suma wygenerowanych roboczogodzin (RH) per picker:**")
+    cols_rh = st.columns(len(pracownicy))
+    for i, p in enumerate(pracownicy):
+        with cols_rh[i]:
+            st.metric(label=p, value=f"{worker_totals[p]:.1f} h")
+
+    tab1, tab2 = st.tabs(["📈 Pokrycie Zamówień w Dobie", "⚖️ Wykres Porównawczy Etatów"])
 
     with tab1:
         selected_day_str = st.selectbox("Wybierz dzień do analizy:", [d.strftime("%d/%m/%Y") for d in dni_zakresu])
@@ -588,24 +594,10 @@ if st.session_state.get("schedule_generated", False):
         st.bar_chart(chart_data)
 
     with tab2:
-        worker_totals = {p: 0.0 for p in pracownicy}
-        for p in pracownicy:
-            for _, r in edited_df.iterrows():
-                val = r[p]
-                if str(val).strip() != "OFF" and "-" in str(val):
-                    try:
-                        parts = str(val).split("-")
-                        h_s = float(parts[0].split(":")[0]) + float(parts[0].split(":")[1]) / 60.0
-                        h_e = float(parts[1].split(":")[0]) + float(parts[1].split(":")[1]) / 60.0
-                        if h_e < h_s:
-                            h_e += 24.0
-                        worker_totals[p] += (h_e - h_s)
-                    except:
-                        pass
-
         df_totals = pd.DataFrame(list(worker_totals.items()), columns=["Picker", "Suma Godzin (RH)"]).set_index("Picker")
         st.bar_chart(df_totals)
 
+    # --- GENEROWANIE EXCELA Z GWARANTOWANYM PODSUMOWANIEM "ŁĄCZNIE" I "SUMA CAŁKOWITA" ---
     st.subheader("📥 Eksport do Pliku Excel")
     
     wb = openpyxl.Workbook()
@@ -659,7 +651,9 @@ if st.session_state.get("schedule_generated", False):
             cell_sh.border = thin_border
         col_idx += 3
 
+    godziny_pracownikow_excel = {p: 0.0 for p in pracownicy}
     row_idx = 3
+
     for _, r in edited_df.iterrows():
         cell_date = ws.cell(row=row_idx, column=1)
         cell_date.value = r["Data"]
@@ -684,7 +678,9 @@ if st.session_state.get("schedule_generated", False):
                     h_e = float(parts[1].split(":")[0]) + float(parts[1].split(":")[1]) / 60.0
                     if h_e < h_s:
                         h_e += 24.0
-                    c_sum.value = round(h_e - h_s, 1)
+                    len_shift = round(h_e - h_s, 1)
+                    c_sum.value = len_shift
+                    godziny_pracownikow_excel[p] += len_shift
                 except:
                     c_sum.value = 0
 
@@ -699,6 +695,55 @@ if st.session_state.get("schedule_generated", False):
                     ws.cell(row=row_idx, column=col_idx + i).border = thin_border
             col_idx += 3
         row_idx += 1
+
+    # WIERSZ PODSUMOWANIA INDYWIDUALNEGO "ŁĄCZNIE"
+    cell_sum_label = ws.cell(row=row_idx, column=1)
+    cell_sum_label.value = "ŁĄCZNIE"
+    cell_sum_label.font = font_bold
+    cell_sum_label.fill = fill_summary
+    cell_sum_label.alignment = align_center
+    cell_sum_label.border = thin_border
+
+    grand_total_hours = 0.0
+    col_idx = 2
+    for p in pracownicy:
+        col_start_letter = openpyxl.utils.get_column_letter(col_idx)
+        col_end_letter = openpyxl.utils.get_column_letter(col_idx + 2)
+
+        ws.merge_cells(f"{col_start_letter}{row_idx}:{col_end_letter}{row_idx}")
+        cell_total = ws[f"{col_start_letter}{row_idx}"]
+        cell_total.value = f"{round(godziny_pracownikow_excel[p], 1)}h"
+        cell_total.font = font_bold
+        cell_total.fill = fill_summary
+        cell_total.alignment = align_center
+
+        grand_total_hours += godziny_pracownikow_excel[p]
+
+        for i in range(3):
+            ws.cell(row=row_idx, column=col_idx + i).border = thin_border
+
+        col_idx += 3
+
+    row_idx += 1
+
+    # WIERSZ SUMY CAŁKOWITEJ MAGAZYNU
+    cell_grand_label = ws.cell(row=row_idx, column=1)
+    cell_grand_label.value = "SUMA CAŁKOWITA"
+    cell_grand_label.font = font_bold
+    cell_grand_label.fill = fill_total_sum
+    cell_grand_label.alignment = align_center
+    cell_grand_label.border = thin_border
+
+    last_col_letter = openpyxl.utils.get_column_letter(col_idx - 1)
+    ws.merge_cells(f"B{row_idx}:{last_col_letter}{row_idx}")
+    cell_grand_val = ws[f"B{row_idx}"]
+    cell_grand_val.value = f"{round(grand_total_hours, 1)} Roboczogodzin (RH)"
+    cell_grand_val.font = font_total_sum
+    cell_grand_val.fill = fill_total_sum
+    cell_grand_val.alignment = align_center
+
+    for c in range(2, col_idx):
+        ws.cell(row=row_idx, column=c).border = thin_border
 
     ws.column_dimensions["A"].width = 16
     for c in range(2, col_idx):
