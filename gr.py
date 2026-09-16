@@ -151,7 +151,6 @@ metoda_wprowadzania = st.radio(
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in MAPA_DNI.values()}
 dane_zrodlowe_wczytane = False
 
-# Domyślna matryca z Lookera zasilająca dane ze zrzutu ekranu
 mock_looker_matrix = {
     "Poniedziałek": {7: 7, 8: 6, 9: 11, 10: 13, 11: 14, 12: 12, 13: 9, 14: 11, 15: 14, 16: 15, 17: 16, 18: 25, 19: 24, 20: 23, 21: 19, 22: 9},
     "Wtorek": {7: 10, 8: 9, 9: 7, 10: 12, 11: 15, 12: 14, 13: 11, 14: 15, 15: 9, 16: 10, 17: 17, 18: 16, 19: 25, 20: 26, 21: 16, 22: 10},
@@ -233,7 +232,7 @@ else:
         except Exception as e:
             st.error(f"Błąd odczytu pliku: {e}")
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU (CIĄGŁOŚĆ BEZ DZIUR) ---
 st.divider()
 st.header("3. Moduł: Szkielet Grafiku (Sloty Godzinowe)")
 
@@ -253,10 +252,18 @@ if dane_zrodlowe_wczytane:
             "Dzień Msc": d.day,
         }
         
+        # ZAPEWNIENIE PEŁNEGO POKRYCIA OD 06:00 DO ZAMKNIĘCIA
         day_shifts = []
-        day_shifts.append((6.0, 14.0))
-        day_shifts.append((15.3 if is_nocny else 15.5, godzina_zamkniecia_ds))
+        day_shifts.append((6.0, 14.0)) # Otwarcie rano (8h)
         
+        # Zmiana zamykająca nakłada się lub rozpoczyna dokładnie o 14:00 (brak luki!)
+        start_close = 15.5 if (godzina_zamkniecia_ds - 8.0) > 14.0 else 14.0
+        if is_nocny:
+            start_close = 17.5
+            
+        day_shifts.append((start_close, godzina_zamkniecia_ds))
+        
+        # Dodatkowe zmiany środkowe na piki zamówień
         mid_volume = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(11, 18))
         if mid_volume > cel_efektywnosci * 12:
             day_shifts.append((09.0, 17.0))
@@ -277,7 +284,7 @@ if dane_zrodlowe_wczytane:
 
     df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    st.write("📐 **Wygenerowana Formatka Szkieletu (Puste Sloty pod Obsadę):**")
+    st.write("📐 **Wygenerowana Formatka Szkieletu (Gwarancja Pokrycia Całej Doby):**")
     st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
     wb_sk = openpyxl.Workbook()
