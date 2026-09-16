@@ -85,7 +85,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian z Sumami Dziennymi i Całkowitymi</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian z Wyrównywaniem Czasów Zmian</p>",
         unsafe_allow_html=True,
     )
 
@@ -228,9 +228,9 @@ else:
         except Exception as e:
             st.error(f"Błąd odczytu pliku: {e}")
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU Z SUMAMI DZIKIMI I CAŁKOWITYMI ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU DŁUGOŚCI ZMIAN I WYRÓWNYWANIE ZMIAN (np. 7.5h + 7.5h) ---
 st.divider()
-st.header("3. Generator Szkieletu Grafiku")
+st.header("3. Generator Szkieletu Grafiku (Zbalansowane Zmiany)")
 
 if dane_zrodlowe_wczytane:
     def format_time(h_float):
@@ -243,7 +243,7 @@ if dane_zrodlowe_wczytane:
 
     dozwolone_zmiany = []
     for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
-        for l in [float(x)/2.0 for x in range(12, 25)]:
+        for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h, 6.5h, ..., 12.0h
             if s + l <= godzina_zamkniecia_ds:
                 dozwolone_zmiany.append((s, l, s + l))
 
@@ -262,7 +262,15 @@ if dane_zrodlowe_wczytane:
         prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
         x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
         
-        prob += pulp.lpSum(x[i] * dozwolone_zmiany[i][1] for i in range(len(dozwolone_zmiany)))
+        # DODANA KARA ZA NIEWYSYMERYZOWANE DŁUGOŚCI ZMIAN (DĄŻENIE DO RÓWNYCH ZMIAN NP 7.5h i 7.5h)
+        # Priorytetyzujemy standardowe, równe zmiany 7.5h / 8.0h / 8.5h ponad 6.5h z 8.5h
+        kara_symetrii = []
+        for i, (s, l, e) in enumerate(dozwolone_zmiany):
+            # Preferuj narzut 7.5h lub 8.0h (minimalny koszt kary)
+            odchylenie = abs(l - 7.5) * 0.1
+            kara_symetrii.append(x[i] * (l + odchylenie))
+
+        prob += pulp.lpSum(kara_symetrii)
         
         for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
             h_int = int(h_step)
@@ -300,10 +308,10 @@ if dane_zrodlowe_wczytane:
 
     df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    st.write("📐 **Podgląd Szkieletu Slotów Godzinowych:**")
+    st.write("📐 **Podgląd Zbalansowanego Szkieletu Slotów (Równe Zmiany np. 7.5h + 7.5h):**")
     st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
-    # TWORZENIE FORMOWANEGO EXCELA Z SUMAMI
+    # EXCEL FORMOWANY Z BRANDINGIEM JUSH!
     wb_sk = openpyxl.Workbook()
     ws_sk = wb_sk.active
     ws_sk.title = "Szkielet Grafiku"
@@ -352,17 +360,14 @@ if dane_zrodlowe_wczytane:
 
             col_c += 4
 
-        # KROK 1: SUMA DNIA PO PRAWEJ STRONIE
         cell_day_total = ws_sk.cell(row=r_idx, column=col_c, value=f"{day_total:.1f}h")
         cell_day_total.font = font_bold
         cell_day_total.fill = fill_summary
         cell_day_total.alignment = align_center
         grand_total_rh += day_total
 
-    # NAGŁÓWEK OSTATNIEJ KOLUMNY DLA SUMY DNIA
     ws_sk.cell(row=1, column=4 + max_slots_found * 4 - 3, value="Suma Dnia (RH)").font = font_bold
 
-    # KROK 2: SUMA KAŻDEJ ZMIANY NA DOLE KOLEJNYCH KOLUMN
     last_r = len(skeleton_rows) + 2
     ws_sk.cell(row=last_r, column=1, value="Suma Zmiany").font = font_bold
 
@@ -374,7 +379,6 @@ if dane_zrodlowe_wczytane:
         c_sum_slot.alignment = align_center
         col_c += 4
 
-    # KROK 3: SUMA CAŁKOWITA NA SAMYM DOLE PO PRAWEJ STRONIE
     c_grand_total = ws_sk.cell(row=last_r, column=col_c, value=f"{grand_total_rh:.1f}h RH")
     c_grand_total.font = font_bold
     c_grand_total.fill = fill_total
@@ -383,7 +387,7 @@ if dane_zrodlowe_wczytane:
     buf_sk = io.BytesIO()
     wb_sk.save(buf_sk)
 
-    st.subheader("📥 Pobieranie Formatki")
+    st.subheader("📥 Pobieranie Zbalansowanej Formatki")
     st.download_button(
         label="📥 Pobierz Wygenerowany Szkielet Grafiku (.xlsx)",
         data=buf_sk.getvalue(),
