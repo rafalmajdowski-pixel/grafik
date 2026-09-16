@@ -85,7 +85,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian (Gwarancja Ciągłej Obsady 100% Czasu)</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian z Sumami Dziennymi i Całkowitymi</p>",
         unsafe_allow_html=True,
     )
 
@@ -228,9 +228,9 @@ else:
         except Exception as e:
             st.error(f"Błąd odczytu pliku: {e}")
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU (GWARANCJA STALEJ OBSADY BEZ DZIUR) ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU Z SUMAMI DZIKIMI I CAŁKOWITYMI ---
 st.divider()
-st.header("3. Generator Szkieletu Grafiku (Gwarancja Ciągłej Obsady)")
+st.header("3. Generator Szkieletu Grafiku")
 
 if dane_zrodlowe_wczytane:
     def format_time(h_float):
@@ -241,10 +241,9 @@ if dane_zrodlowe_wczytane:
     skeleton_rows = []
     max_slots_found = 0
 
-    # Wszystkie dozwolone długości zmian od 6h do 12h z krokiem półgodzinnym
     dozwolone_zmiany = []
     for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
-        for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h, 6.5h, ..., 12.0h
+        for l in [float(x)/2.0 for x in range(12, 25)]:
             if s + l <= godzina_zamkniecia_ds:
                 dozwolone_zmiany.append((s, l, s + l))
 
@@ -255,7 +254,6 @@ if dane_zrodlowe_wczytane:
             "Dzień Msc": d.day,
         }
         
-        # WYMÓG POPYTU + BEZWZGLĘDNY ZAKAZ PUSTYCH CHWIL (MIN 1 OSOBA OD 06:00 DO ZAMKNIĘCIA)
         req_pickers = {}
         for h in range(6, int(godzina_zamkniecia_ds)):
             orders_h = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
@@ -264,15 +262,12 @@ if dane_zrodlowe_wczytane:
         prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
         x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
         
-        # Funkcja celu: minimalizowanie całkowitego czasu RH
         prob += pulp.lpSum(x[i] * dozwolone_zmiany[i][1] for i in range(len(dozwolone_zmiany)))
         
-        # Wymóg pokrycia zapotrzebowania DLA KAŻDEJ PÓŁGODZINY BEZ WYJĄTKU
         for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
             h_int = int(h_step)
             w_potrzeba = req_pickers.get(h_int, 1)
             
-            # Zmiany, które obejmują dany krok czasowy h_step
             zabezpieczenie = [
                 x[i] for i, (s, l, e) in enumerate(dozwolone_zmiany)
                 if s <= h_step < e
@@ -292,20 +287,23 @@ if dane_zrodlowe_wczytane:
         if len(day_shifts) > max_slots_found:
             max_slots_found = len(day_shifts)
 
+        sum_day_rh = 0.0
         for slot_idx, (s, e) in enumerate(day_shifts):
             dur = e - s
+            sum_day_rh += dur
             row_dict[f"Start {slot_idx+1}"] = format_time(s)
             row_dict[f"Koniec {slot_idx+1}"] = format_time(e)
             row_dict[f"RH {slot_idx+1}"] = f"{dur:.1f}h"
 
+        row_dict["Suma Dnia (RH)"] = f"{sum_day_rh:.1f}h"
         skeleton_rows.append(row_dict)
 
     df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    st.write("📐 **Podgląd Szkieletu Zmian (Bezwzględna Ciągłość Obsady 100% Czasu Pracy DS):**")
+    st.write("📐 **Podgląd Szkieletu Slotów Godzinowych:**")
     st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
-    # EXCEL
+    # TWORZENIE FORMOWANEGO EXCELA Z SUMAMI
     wb_sk = openpyxl.Workbook()
     ws_sk = wb_sk.active
     ws_sk.title = "Szkielet Grafiku"
@@ -316,6 +314,11 @@ if dane_zrodlowe_wczytane:
     fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")
     fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+    fill_summary = PatternFill(start_color="EBF7D4", end_color="EBF7D4", fill_type="solid")
+    fill_total = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
+
+    slot_sum_rh = {i: 0.0 for i in range(1, max_slots_found + 1)}
+    grand_total_rh = 0.0
 
     for r_idx, r_data in enumerate(skeleton_rows, start=1):
         cell_day = ws_sk.cell(row=r_idx, column=1, value=r_data["Dzień"])
@@ -325,6 +328,7 @@ if dane_zrodlowe_wczytane:
             cell_day.fill = fill_sunday
 
         col_c = 4
+        day_total = 0.0
         for slot_i in range(1, max_slots_found + 1):
             s_val = r_data.get(f"Start {slot_i}", "-")
             e_val = r_data.get(f"Koniec {slot_i}", "-")
@@ -338,10 +342,43 @@ if dane_zrodlowe_wczytane:
             c_e.fill = fill_end
             c_rh.font = font_bold
             
+            if rh_val != "-":
+                val_h = float(rh_val.replace("h", ""))
+                slot_sum_rh[slot_i] += val_h
+                day_total += val_h
+
             for c in [c_s, c_e, c_rh]:
                 c.alignment = align_center
 
             col_c += 4
+
+        # KROK 1: SUMA DNIA PO PRAWEJ STRONIE
+        cell_day_total = ws_sk.cell(row=r_idx, column=col_c, value=f"{day_total:.1f}h")
+        cell_day_total.font = font_bold
+        cell_day_total.fill = fill_summary
+        cell_day_total.alignment = align_center
+        grand_total_rh += day_total
+
+    # NAGŁÓWEK OSTATNIEJ KOLUMNY DLA SUMY DNIA
+    ws_sk.cell(row=1, column=4 + max_slots_found * 4 - 3, value="Suma Dnia (RH)").font = font_bold
+
+    # KROK 2: SUMA KAŻDEJ ZMIANY NA DOLE KOLEJNYCH KOLUMN
+    last_r = len(skeleton_rows) + 2
+    ws_sk.cell(row=last_r, column=1, value="Suma Zmiany").font = font_bold
+
+    col_c = 4
+    for slot_i in range(1, max_slots_found + 1):
+        c_sum_slot = ws_sk.cell(row=last_r, column=col_c+2, value=f"{slot_sum_rh[slot_i]:.1f}h")
+        c_sum_slot.font = font_bold
+        c_sum_slot.fill = fill_summary
+        c_sum_slot.alignment = align_center
+        col_c += 4
+
+    # KROK 3: SUMA CAŁKOWITA NA SAMYM DOLE PO PRAWEJ STRONIE
+    c_grand_total = ws_sk.cell(row=last_r, column=col_c, value=f"{grand_total_rh:.1f}h RH")
+    c_grand_total.font = font_bold
+    c_grand_total.fill = fill_total
+    c_grand_total.alignment = align_center
 
     buf_sk = io.BytesIO()
     wb_sk.save(buf_sk)
