@@ -9,7 +9,7 @@ import streamlit as st
 
 # --- KONFIGURACJA STRONY STREAMLIT ---
 st.set_page_config(
-    page_title="żabka jush! - Optymalizator Grafiku DS",
+    page_title="żabka jush! - Generator Grafiku DS",
     page_icon="⚡",
     layout="wide",
 )
@@ -84,7 +84,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator Grafiku Pickerów DS</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator i Generator Szkieletu Grafiku DS</p>",
         unsafe_allow_html=True,
     )
 
@@ -203,8 +203,109 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Błąd odczytu pliku z Lookera: {e}")
 
-# --- 3. PRACOWNICI & USTAWIENIA INDYWIDUALNE ---
-st.header("3. Zespół Pickerów DS & Indywidualne Reguły")
+# --- NEW: MODUŁ SZKIELETU GRAFIKU ---
+st.divider()
+st.header("3. Moduł: Szkielet Grafiku (Sloty Godzinowe)")
+
+if uploaded_file:
+    def format_time(h_float):
+        h_int = int(h_float) % 24
+        m_int = int(round((h_float - int(h_float)) * 60))
+        return f"{h_int:02d}:{m_int:02d}"
+
+    skeleton_rows = []
+    max_slots_found = 0
+
+    for d in dni_zakresu:
+        d_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
+        row_dict = {
+            "Dzień": d_nazwa,
+            "Dzień Msc": d.day,
+        }
+        
+        # Algorytm doboru stałych bloków zmian na podstawie wolumenu Lookera
+        day_shifts = []
+        
+        # Domyślne pokrycie otwarcia i zamknięcia
+        day_shifts.append((6.0, 14.0)) # Rano
+        day_shifts.append((15.3 if is_nocny else 15.5, godzina_zamkniecia_ds)) # Zamknięcie
+        
+        # Zmiany środkowe na podstawie piku zamówień
+        mid_volume = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(11, 18))
+        if mid_volume > cel_efektywnosci * 12:
+            day_shifts.append((09.0, 17.0))
+            day_shifts.append((14.0, 22.0))
+        elif mid_volume > cel_efektywnosci * 6:
+            day_shifts.append((10.0, 18.0))
+
+        if len(day_shifts) > max_slots_found:
+            max_slots_found = len(day_shifts)
+
+        for slot_idx, (s, e) in enumerate(day_shifts):
+            dur = e - s
+            row_dict[f"Start {slot_idx+1}"] = format_time(s)
+            row_dict[f"Koniec {slot_idx+1}"] = format_time(e)
+            row_dict[f"RH {slot_idx+1}"] = f"{dur:.1f}h"
+
+        skeleton_rows.append(row_dict)
+
+    df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
+
+    st.write("📐 **Wygenerowana Formatka Szkieletu (Puste Sloty pod Obsadę):**")
+    st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
+
+    # --- EKSPORT DEDYKOWANEGO EXCELA ZE SZKIELETEM (STYL ZE ZDJĘCIA) ---
+    wb_sk = openpyxl.Workbook()
+    ws_sk = wb_sk.active
+    ws_sk.title = "Szkielet Grafiku"
+
+    font_bold = Font(name="Calibri", size=10, bold=True)
+    font_regular = Font(name="Calibri", size=10)
+    align_center = Alignment(horizontal="center", vertical="center")
+    
+    fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # Żółty ze zdjęcia
+    fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")     # Fiolet ze zdjęcia
+    fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")  # Różowy/Niedziela
+
+    for r_idx, r_data in enumerate(skeleton_rows, start=1):
+        cell_day = ws_sk.cell(row=r_idx, column=1, value=r_data["Dzień"])
+        cell_num = ws_sk.cell(row=r_idx, column=2, value=r_data["Dzień Msc"])
+        
+        if r_data["Dzień"] == "Niedziela":
+            cell_day.fill = fill_sunday
+
+        col_c = 4
+        for slot_i in range(1, max_slots_found + 1):
+            s_val = r_data.get(f"Start {slot_i}", "-")
+            e_val = r_data.get(f"Koniec {slot_i}", "-")
+            rh_val = r_data.get(f"RH {slot_i}", "-")
+
+            c_s = ws_sk.cell(row=r_idx, column=col_c, value=s_val)
+            c_e = ws_sk.cell(row=r_idx, column=col_c+1, value=e_val)
+            c_rh = ws_sk.cell(row=r_idx, column=col_c+2, value=rh_val)
+
+            c_s.fill = fill_start
+            c_e.fill = fill_end
+            c_rh.font = font_bold
+            
+            for c in [c_s, c_e, c_rh]:
+                c.alignment = align_center
+
+            col_c += 4
+
+    buf_sk = io.BytesIO()
+    wb_sk.save(buf_sk)
+
+    st.download_button(
+        label="📥 Pobierz Sam Szkielet Grafiku (.xlsx)",
+        data=buf_sk.getvalue(),
+        file_name="szkielet_grafiku_ds.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+# --- 4. PRACOWNICI & USTAWIENIA INDYWIDUALNE ---
+st.divider()
+st.header("4. Zespół Pickerów DS & Indywidualne Reguły")
 
 pracownicy_default = [
     "Aval01204VasinA",
@@ -309,10 +410,10 @@ with c_url:
     else:
         st.caption("Brak nieobecności w grafiku.")
 
-# --- 4. GENEROWANIE GRAFIKU Z NAKAZEM OBSADY KAŻDEGO DNIA ---
+# --- 5. GENEROWANIE PEŁNEGO GRAFIKU OBSADY ---
 st.divider()
-st.header("4. Generowanie Grafiku Pickerów")
-if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=True):
+st.header("5. Przypisanie Pickerów do Grafiku")
+if st.button("🚀 Wygeneruj Pełny Grafik jush!", type="primary", use_container_width=True):
     if not uploaded_file:
         st.error("Proszę najpierw wgrać plik z Lookera!")
     elif not pracownicy:
@@ -505,10 +606,10 @@ if st.button("🚀 Wygeneruj Grafik jush!", type="primary", use_container_width=
         except Exception as e:
             st.error(f"⚠️ Wystąpił błąd podczas obliczeń: {e}")
 
-# --- 5. INTERAKTYWNY PODGLĄD, EDYTOR NA ŻYWO I ANALITYKA ---
+# --- 6. INTERAKTYWNY PODGLĄD I EXCEL ---
 if st.session_state.get("schedule_generated", False):
     st.divider()
-    st.header("5. Podgląd Grafiku & Analityka Obsady DS")
+    st.header("6. Podgląd Grafiku & Pobieranie")
 
     pracownicy = st.session_state.pracownicy
     dni_zakresu = st.session_state.dni_zakresu
@@ -535,8 +636,6 @@ if st.session_state.get("schedule_generated", False):
     df_editor = pd.DataFrame(data_rows)
 
     st.subheader("📝 Edytuj grafik na żywo:")
-    st.info("💡 Zmiany wprowadzane w komórkach poniżej przeliczają się automatycznie na plik Excel i wykresy.")
-
     edited_df = st.data_editor(df_editor, num_rows="fixed", use_container_width=True)
 
     worker_totals = {p: 0.0 for p in pracownicy}
@@ -554,50 +653,12 @@ if st.session_state.get("schedule_generated", False):
                 except:
                     pass
 
-    st.subheader("📊 Analityka Obsady i Godzin Pickerów")
-    
-    st.write("⏱️ **Suma wygenerowanych roboczogodzin (RH) per picker:**")
+    st.subheader("📊 Podsumowanie Roboczogodzin (RH):")
     cols_rh = st.columns(len(pracownicy))
     for i, p in enumerate(pracownicy):
         with cols_rh[i]:
             st.metric(label=p, value=f"{worker_totals[p]:.1f} h")
 
-    tab1, tab2 = st.tabs(["📈 Pokrycie Zamówień w Dobie", "⚖️ Wykres Porównawczy Etatów"])
-
-    with tab1:
-        selected_day_str = st.selectbox("Wybierz dzień do analizy:", [d.strftime("%d/%m/%Y") for d in dni_zakresu])
-        sel_date = next(d for d in dni_zakresu if d.strftime("%d/%m/%Y") == selected_day_str)
-
-        req_hours = st.session_state.wymagani_h.get(sel_date, {})
-        actual_hours = {h: 0 for h in range(26)}
-
-        for p in pracownicy:
-            val = edited_df.loc[edited_df["Data"] == selected_day_str, p].values[0]
-            if str(val).strip() != "OFF" and "-" in str(val):
-                try:
-                    parts = str(val).split("-")
-                    h_s = float(parts[0].split(":")[0]) + float(parts[0].split(":")[1]) / 60.0
-                    h_e = float(parts[1].split(":")[0]) + float(parts[1].split(":")[1]) / 60.0
-                    if h_e < h_s:
-                        h_e += 24.0
-                    for h in range(int(h_s), int(h_e)):
-                        actual_hours[h] += 1
-                except:
-                    pass
-
-        chart_data = pd.DataFrame({
-            "Godzina": [f"{h:02d}:00" for h in range(6, 24)],
-            "Wymagana obsada (Looker)": [req_hours.get(h, 0) for h in range(6, 24)],
-            "Grafikowana obsada": [actual_hours.get(h, 0) for h in range(6, 24)],
-        }).set_index("Godzina")
-
-        st.bar_chart(chart_data)
-
-    with tab2:
-        df_totals = pd.DataFrame(list(worker_totals.items()), columns=["Picker", "Suma Godzin (RH)"]).set_index("Picker")
-        st.bar_chart(df_totals)
-
-    # --- GENEROWANIE EXCELA Z GWARANTOWANYM PODSUMOWANIEM "ŁĄCZNIE" I "SUMA CAŁKOWITA" ---
     st.subheader("📥 Eksport do Pliku Excel")
     
     wb = openpyxl.Workbook()
@@ -696,7 +757,7 @@ if st.session_state.get("schedule_generated", False):
             col_idx += 3
         row_idx += 1
 
-    # WIERSZ PODSUMOWANIA INDYWIDUALNEGO "ŁĄCZNIE"
+    # PODSUMOWANIE ŁĄCZNIE
     cell_sum_label = ws.cell(row=row_idx, column=1)
     cell_sum_label.value = "ŁĄCZNIE"
     cell_sum_label.font = font_bold
@@ -726,7 +787,7 @@ if st.session_state.get("schedule_generated", False):
 
     row_idx += 1
 
-    # WIERSZ SUMY CAŁKOWITEJ MAGAZYNU
+    # SUMA CAŁKOWITA
     cell_grand_label = ws.cell(row=row_idx, column=1)
     cell_grand_label.value = "SUMA CAŁKOWITA"
     cell_grand_label.font = font_bold
@@ -753,7 +814,7 @@ if st.session_state.get("schedule_generated", False):
     wb.save(buffer)
 
     st.download_button(
-        label="📥 Pobierz Gotowy Grafik Excel (.xlsx)",
+        label="📥 Pobierz Pełny Grafik Excel (.xlsx)",
         data=buffer.getvalue(),
         file_name="grafik_pickerzy_jush.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
