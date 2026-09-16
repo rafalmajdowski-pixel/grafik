@@ -85,7 +85,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian (Ścisłe Przepustowości Pakowania)</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian (Gwarancja Ciągłej Obsady 100% Czasu)</p>",
         unsafe_allow_html=True,
     )
 
@@ -228,9 +228,9 @@ else:
         except Exception as e:
             st.error(f"Błąd odczytu pliku: {e}")
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU (ŚCISŁA DEDUKCJA Z MOŻLIWOŚCI PAKOWANIA) ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU (GWARANCJA STALEJ OBSADY BEZ DZIUR) ---
 st.divider()
-st.header("3. Generator Szkieletu Grafiku (Przelicznik Popyt / Pakowanie)")
+st.header("3. Generator Szkieletu Grafiku (Gwarancja Ciągłej Obsady)")
 
 if dane_zrodlowe_wczytane:
     def format_time(h_float):
@@ -241,7 +241,7 @@ if dane_zrodlowe_wczytane:
     skeleton_rows = []
     max_slots_found = 0
 
-    # Wszystkie dozwolone długości zmian od 6h do 12h
+    # Wszystkie dozwolone długości zmian od 6h do 12h z krokiem półgodzinnym
     dozwolone_zmiany = []
     for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
         for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h, 6.5h, ..., 12.0h
@@ -255,26 +255,29 @@ if dane_zrodlowe_wczytane:
             "Dzień Msc": d.day,
         }
         
-        # PRECYZYJNE WYLICZENIE OBSADY DLA KAŻDEJ GODZIN Z MOŻLIWOŚCI PAKOWANIA
+        # WYMÓG POPYTU + BEZWZGLĘDNY ZAKAZ PUSTYCH CHWIL (MIN 1 OSOBA OD 06:00 DO ZAMKNIĘCIA)
         req_pickers = {}
         for h in range(6, int(godzina_zamkniecia_ds)):
             orders_h = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
             req_pickers[h] = max(1, math.ceil(orders_h / cel_efektywnosci))
 
-        # SOLVER UKŁADAJĄCY DŁUGOŚCI ZMIAN (6h-12h) DLA NAKŁADANIA SIĘ NA POPYT
         prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
         x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
         
-        # Minimalizacja niepotrzebnych roboczogodzin
+        # Funkcja celu: minimalizowanie całkowitego czasu RH
         prob += pulp.lpSum(x[i] * dozwolone_zmiany[i][1] for i in range(len(dozwolone_zmiany)))
         
-        # Wymóg pokrycia zapotrzebowania w każdej godzinie
-        for h in range(6, int(godzina_zamkniecia_ds)):
+        # Wymóg pokrycia zapotrzebowania DLA KAŻDEJ PÓŁGODZINY BEZ WYJĄTKU
+        for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
+            h_int = int(h_step)
+            w_potrzeba = req_pickers.get(h_int, 1)
+            
+            # Zmiany, które obejmują dany krok czasowy h_step
             zabezpieczenie = [
                 x[i] for i, (s, l, e) in enumerate(dozwolone_zmiany)
-                if s <= h < e
+                if s <= h_step < e
             ]
-            prob += pulp.lpSum(zabezpieczenie) >= req_pickers[h]
+            prob += pulp.lpSum(zabezpieczenie) >= w_potrzeba
 
         prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
@@ -299,7 +302,7 @@ if dane_zrodlowe_wczytane:
 
     df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    st.write("📐 **Podgląd Szkieletu Zmian (Dopasowany Długościami 6h-12h do Zapotrzebowania):**")
+    st.write("📐 **Podgląd Szkieletu Zmian (Bezwzględna Ciągłość Obsady 100% Czasu Pracy DS):**")
     st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
     # EXCEL
