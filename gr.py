@@ -4,6 +4,7 @@ import math
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
+import pulp
 import streamlit as st
 from PIL import Image
 
@@ -19,6 +20,11 @@ try:
     import openpyxl
 except ImportError:
     st.error("❌ Brakuje biblioteki 'openpyxl'. Upewnij się, że znajduje się w requirements.txt!")
+
+try:
+    import pulp
+except ImportError:
+    st.error("❌ Brakuje biblioteki 'pulp'. Upewnij się, że znajduje się w requirements.txt!")
 
 # --- STYLIZACJA W PALECIE JUSH! ---
 st.markdown(
@@ -79,7 +85,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku DS (Dynamiczne Długości Zmian 6h-12h)</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian (Ścisłe Przepustowości Pakowania)</p>",
         unsafe_allow_html=True,
     )
 
@@ -98,7 +104,7 @@ godzina_otwarcia_ds = 6.0
 godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
 
 cel_efektywnosci = st.sidebar.number_input(
-    "Efektywność pakowania (zamówienia / h / picker)",
+    "Możliwości pakowania zamówień (zamówienia / h / picker)",
     min_value=1,
     value=15,
 )
@@ -161,7 +167,7 @@ if "📸 Wklej zrzut" in metoda_wprowadzania:
             st.session_state.used_clipboard = True
 
     if uploaded_image or st.session_state.get("used_clipboard", False):
-        st.success("⚡ Wczytano obraz Lookera z prognozą zamówień!")
+        st.success("⚡ Wczytano dane Lookera z prognozą zamówień!")
         for d_name, h_dict in mock_looker_matrix.items():
             for h_val, val in h_dict.items():
                 srednie_godzinowe[d_name][h_val] = float(val)
@@ -222,9 +228,9 @@ else:
         except Exception as e:
             st.error(f"Błąd odczytu pliku: {e}")
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU (DYNAMICZNE ZMIANY 6h-12h BEZ LUK) ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU (ŚCISŁA DEDUKCJA Z MOŻLIWOŚCI PAKOWANIA) ---
 st.divider()
-st.header("3. Generowanie Szkieletu Grafiku (Shift Skeleton)")
+st.header("3. Generator Szkieletu Grafiku (Przelicznik Popyt / Pakowanie)")
 
 if dane_zrodlowe_wczytane:
     def format_time(h_float):
@@ -235,6 +241,13 @@ if dane_zrodlowe_wczytane:
     skeleton_rows = []
     max_slots_found = 0
 
+    # Wszystkie dozwolone długości zmian od 6h do 12h
+    dozwolone_zmiany = []
+    for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
+        for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h, 6.5h, ..., 12.0h
+            if s + l <= godzina_zamkniecia_ds:
+                dozwolone_zmiany.append((s, l, s + l))
+
     for d in dni_zakresu:
         d_nazwa = MAPA_DNI.get(d.strftime("%A"), d.strftime("%A"))
         row_dict = {
@@ -242,31 +255,36 @@ if dane_zrodlowe_wczytane:
             "Dzień Msc": d.day,
         }
         
-        # ANALIZA WOLUMENU LOOKERA POD DYNAMICZNE DŁUGOŚCI ZMIAN (6h - 12h)
-        morning_vol = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(6, 14))
-        evening_vol = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(14, int(godzina_zamkniecia_ds)))
+        # PRECYZYJNE WYLICZENIE OBSADY DLA KAŻDEJ GODZIN Z MOŻLIWOŚCI PAKOWANIA
+        req_pickers = {}
+        for h in range(6, int(godzina_zamkniecia_ds)):
+            orders_h = srednie_godzinowe.get(d_nazwa, {}).get(h, 0)
+            req_pickers[h] = max(1, math.ceil(orders_h / cel_efektywnosci))
+
+        # SOLVER UKŁADAJĄCY DŁUGOŚCI ZMIAN (6h-12h) DLA NAKŁADANIA SIĘ NA POPYT
+        prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
+        x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
         
+        # Minimalizacja niepotrzebnych roboczogodzin
+        prob += pulp.lpSum(x[i] * dozwolone_zmiany[i][1] for i in range(len(dozwolone_zmiany)))
+        
+        # Wymóg pokrycia zapotrzebowania w każdej godzinie
+        for h in range(6, int(godzina_zamkniecia_ds)):
+            zabezpieczenie = [
+                x[i] for i, (s, l, e) in enumerate(dozwolone_zmiany)
+                if s <= h < e
+            ]
+            prob += pulp.lpSum(zabezpieczenie) >= req_pickers[h]
+
+        prob.solve(pulp.PULP_CBC_CMD(msg=False))
+
         day_shifts = []
+        for i, (s, l, e) in enumerate(dozwolone_zmiany):
+            val = int(x[i].varValue or 0)
+            for _ in range(val):
+                day_shifts.append((s, e))
 
-        # Dynamiczny dobór długości zmiany porannej (od 8h do 10h)
-        len_morning = 9.0 if morning_vol > cel_efektywnosci * 8 else 8.0
-        end_morning = 6.0 + len_morning
-        day_shifts.append((6.0, end_morning))
-
-        # Dynamiczny dobór zmiany zamykającej (zawsze zachodzi na zmianę poranną)
-        start_close = max(6.0, end_morning - 1.0) # 1-godzinna zakładka dla idealnej ciągłości
-        if is_nocny:
-            start_close = 15.5
-            
-        day_shifts.append((start_close, godzina_zamkniecia_ds))
-
-        # Szukanie piku zamówień po południu dla dodatkowych zmian (6h-12h)
-        total_day_vol = morning_vol + evening_vol
-        if total_day_vol > cel_efektywnosci * 20:
-            day_shifts.append((09.0, 18.0)) # 9h
-            day_shifts.append((14.0, 22.0)) # 8h
-        elif total_day_vol > cel_efektywnosci * 12:
-            day_shifts.append((10.0, 18.0)) # 8h
+        day_shifts.sort(key=lambda x: (x[0], x[1]))
 
         if len(day_shifts) > max_slots_found:
             max_slots_found = len(day_shifts)
@@ -281,10 +299,10 @@ if dane_zrodlowe_wczytane:
 
     df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    st.write("📐 **Podgląd Szkieletu Slotów Godzinowych (Dynamiczne Zmiany 6h-12h Bez Dziur):**")
+    st.write("📐 **Podgląd Szkieletu Zmian (Dopasowany Długościami 6h-12h do Zapotrzebowania):**")
     st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
-    # TWORZENIE FORMOWANEGO EXCELA ZE SZKIELETEM
+    # EXCEL
     wb_sk = openpyxl.Workbook()
     ws_sk = wb_sk.active
     ws_sk.title = "Szkielet Grafiku"
@@ -333,5 +351,3 @@ if dane_zrodlowe_wczytane:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
-else:
-    st.info("💡 Przekaż zrzut ekranu lub plik z Lookera w sekcji 2, aby wygenerować szkielet grafiku.")
