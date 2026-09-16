@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import io
+import math
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
@@ -78,7 +79,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku DS (Shift Skeleton)</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku DS (Dynamiczne Długości Zmian 6h-12h)</p>",
         unsafe_allow_html=True,
     )
 
@@ -221,7 +222,7 @@ else:
         except Exception as e:
             st.error(f"Błąd odczytu pliku: {e}")
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU (DYNAMICZNE ZMIANY 6h-12h BEZ LUK) ---
 st.divider()
 st.header("3. Generowanie Szkieletu Grafiku (Shift Skeleton)")
 
@@ -241,24 +242,31 @@ if dane_zrodlowe_wczytane:
             "Dzień Msc": d.day,
         }
         
-        # ZAPEWNIENIE PEŁNEGO POKRYCIA BEZ DZIUR
-        day_shifts = []
-        day_shifts.append((6.0, 14.0)) # Otwarcie poranne
+        # ANALIZA WOLUMENU LOOKERA POD DYNAMICZNE DŁUGOŚCI ZMIAN (6h - 12h)
+        morning_vol = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(6, 14))
+        evening_vol = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(14, int(godzina_zamkniecia_ds)))
         
-        # Pierwsza zmiana zamykająca zaczyna się dokładnie o 14:00 (brak przerwy!)
-        start_close = 15.5 if (godzina_zamkniecia_ds - 8.0) > 14.0 else 14.0
+        day_shifts = []
+
+        # Dynamiczny dobór długości zmiany porannej (od 8h do 10h)
+        len_morning = 9.0 if morning_vol > cel_efektywnosci * 8 else 8.0
+        end_morning = 6.0 + len_morning
+        day_shifts.append((6.0, end_morning))
+
+        # Dynamiczny dobór zmiany zamykającej (zawsze zachodzi na zmianę poranną)
+        start_close = max(6.0, end_morning - 1.0) # 1-godzinna zakładka dla idealnej ciągłości
         if is_nocny:
-            start_close = 17.5
+            start_close = 15.5
             
         day_shifts.append((start_close, godzina_zamkniecia_ds))
-        
-        # Dodatkowe sloty środkowe na szczyt zamówień
-        mid_volume = sum(srednie_godzinowe.get(d_nazwa, {}).get(h, 0) for h in range(11, 18))
-        if mid_volume > cel_efektywnosci * 12:
-            day_shifts.append((09.0, 17.0))
-            day_shifts.append((14.0, 22.0))
-        elif mid_volume > cel_efektywnosci * 6:
-            day_shifts.append((10.0, 18.0))
+
+        # Szukanie piku zamówień po południu dla dodatkowych zmian (6h-12h)
+        total_day_vol = morning_vol + evening_vol
+        if total_day_vol > cel_efektywnosci * 20:
+            day_shifts.append((09.0, 18.0)) # 9h
+            day_shifts.append((14.0, 22.0)) # 8h
+        elif total_day_vol > cel_efektywnosci * 12:
+            day_shifts.append((10.0, 18.0)) # 8h
 
         if len(day_shifts) > max_slots_found:
             max_slots_found = len(day_shifts)
@@ -273,10 +281,10 @@ if dane_zrodlowe_wczytane:
 
     df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    st.write("📐 **Podgląd Szkieletu Slotów Godzinowych (Gotowa Formatka):**")
+    st.write("📐 **Podgląd Szkieletu Slotów Godzinowych (Dynamiczne Zmiany 6h-12h Bez Dziur):**")
     st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
-    # CREATING EXCEL FILE Z BRANDINGIEM JUSH!
+    # TWORZENIE FORMOWANEGO EXCELA ZE SZKIELETEM
     wb_sk = openpyxl.Workbook()
     ws_sk = wb_sk.active
     ws_sk.title = "Szkielet Grafiku"
@@ -284,9 +292,9 @@ if dane_zrodlowe_wczytane:
     font_bold = Font(name="Calibri", size=10, bold=True)
     align_center = Alignment(horizontal="center", vertical="center")
     
-    fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # Żółty Start
-    fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")     # Fiolet Koniec
-    fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")  # Niedziela
+    fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")
+    fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
 
     for r_idx, r_data in enumerate(skeleton_rows, start=1):
         cell_day = ws_sk.cell(row=r_idx, column=1, value=r_data["Dzień"])
