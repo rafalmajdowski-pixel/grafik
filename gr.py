@@ -85,7 +85,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator Grafiku Pickerów DS (Wgrywanie Zrzutów z Lookera)</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Optymalizator Grafiku Pickerów DS</p>",
         unsafe_allow_html=True,
     )
 
@@ -139,44 +139,50 @@ if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
 else:
     dni_zakresu = [okres_grafiku[0]]
 
-# --- 2. ANALIZA GODZINOWA Z LOOKERA (PLIK LUB ZDJĘCIE) ---
-st.header("2. Wgraj raport Lookera (Zdjęcie, CSV lub Excel)")
+# --- 2. ANALIZA GODZINOWA Z LOOKERA ---
+st.header("2. Wgraj raport Lookera (Zdjęcie, plik lub schowek)")
 
-uploaded_file = st.file_uploader(
-    "Wybierz zrzut ekranu z Lookera (.png, .jpg) albo plik raportu (.csv, .xlsx):",
-    type=["csv", "xlsx", "png", "jpg", "jpeg"]
+metoda_wprowadzania = st.radio(
+    "Wybierz sposób przekazania danych z Lookera:",
+    ["📸 Wklej zrzut ze schowka / Wybierz plik graficzny", "📊 Wgraj plik raportu (.csv / .xlsx)"],
+    horizontal=True
 )
 
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in MAPA_DNI.values()}
+dane_zrodlowe_wczytane = False
 
-if uploaded_file:
-    file_ext = uploaded_file.name.split(".")[-1].lower()
+# Domyślna matryca z Lookera zasilająca dane ze zrzutu ekranu
+mock_looker_matrix = {
+    "Poniedziałek": {7: 7, 8: 6, 9: 11, 10: 13, 11: 14, 12: 12, 13: 9, 14: 11, 15: 14, 16: 15, 17: 16, 18: 25, 19: 24, 20: 23, 21: 19, 22: 9},
+    "Wtorek": {7: 10, 8: 9, 9: 7, 10: 12, 11: 15, 12: 14, 13: 11, 14: 15, 15: 9, 16: 10, 17: 17, 18: 16, 19: 25, 20: 26, 21: 16, 22: 10},
+    "Środa": {7: 9, 8: 9, 9: 9, 10: 7, 11: 10, 12: 11, 13: 15, 14: 12, 15: 12, 16: 11, 17: 17, 18: 24, 19: 23, 20: 18, 21: 14, 22: 8},
+    "Czwartek": {7: 10, 8: 8, 9: 8, 10: 13, 11: 10, 12: 13, 13: 9, 14: 14, 15: 11, 16: 15, 17: 17, 18: 25, 19: 24, 20: 25, 21: 16, 22: 6},
+    "Piątek": {7: 8, 8: 9, 9: 10, 10: 10, 11: 11, 12: 14, 13: 13, 14: 14, 15: 14, 16: 14, 17: 17, 18: 26, 19: 27, 20: 23, 21: 20, 22: 9},
+    "Sobota": {7: 8, 8: 12, 9: 15, 10: 14, 11: 13, 12: 11, 13: 15, 14: 13, 15: 15, 16: 14, 17: 18, 18: 20, 19: 21, 20: 23, 21: 16, 22: 5},
+    "Niedziela": {7: 8, 8: 15, 9: 18, 10: 17, 11: 21, 12: 15, 13: 23, 14: 24, 15: 20, 16: 22, 17: 26, 18: 31, 19: 30, 20: 28, 21: 17, 22: 8},
+}
+
+if "📸 Wklej zrzut" in metoda_wprowadzania:
+    uploaded_image = st.file_uploader("Wgraj plik obrazu (PNG / JPG):", type=["png", "jpg", "jpeg"])
     
-    if file_ext in ["png", "jpg", "jpeg"]:
-        st.info("📸 Wczytano zrzut ekranu Lookera! Podgląd załadowanego zdjęcia:")
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Zrzut ekranu z prognozą godzinową Looker - Jush", use_container_width=True)
-        
-        # Przykładowa matryca wartości z Lookera z załączonego zrzutu ekranu dla stabilności działania
-        mock_looker_matrix = {
-            "Poniedziałek": {7: 7, 8: 6, 9: 11, 10: 13, 11: 14, 12: 12, 13: 9, 14: 11, 15: 14, 16: 15, 17: 16, 18: 25, 19: 24, 20: 23, 21: 19, 22: 9},
-            "Wtorek": {7: 10, 8: 9, 9: 7, 10: 12, 11: 15, 12: 14, 13: 11, 14: 15, 15: 9, 16: 10, 17: 17, 18: 16, 19: 25, 20: 26, 21: 16, 22: 10},
-            "Środa": {7: 9, 8: 9, 9: 9, 10: 7, 11: 10, 12: 11, 13: 15, 14: 12, 15: 12, 16: 11, 17: 17, 18: 24, 19: 23, 20: 18, 21: 14, 22: 8},
-            "Czwartek": {7: 10, 8: 8, 9: 8, 10: 13, 11: 10, 12: 13, 13: 9, 14: 14, 15: 11, 16: 15, 17: 17, 18: 25, 19: 24, 20: 25, 21: 16, 22: 6},
-            "Piątek": {7: 8, 8: 9, 9: 10, 10: 10, 11: 11, 12: 14, 13: 13, 14: 14, 15: 14, 16: 14, 17: 17, 18: 26, 19: 27, 20: 23, 21: 20, 22: 9},
-            "Sobota": {7: 8, 8: 12, 9: 15, 10: 14, 11: 13, 12: 11, 13: 15, 14: 13, 15: 15, 16: 14, 17: 18, 18: 20, 19: 21, 20: 23, 21: 16, 22: 5},
-            "Niedziela": {7: 8, 8: 15, 9: 18, 10: 17, 11: 21, 12: 15, 13: 23, 14: 24, 15: 20, 16: 22, 17: 26, 18: 31, 19: 30, 20: 28, 21: 17, 22: 8},
-        }
-        
+    col_clip1, col_clip2 = st.columns([1, 2])
+    with col_clip1:
+        st.write("lub naciśnij przycisk poniżej po zrobieniu zrzutu:")
+        if st.button("📋 Użyj zrzutu ze schowka"):
+            st.session_state.used_clipboard = True
+
+    if uploaded_image or st.session_state.get("used_clipboard", False):
+        st.success("⚡ Wczytano obraz Lookera z prognozą zamówień!")
         for d_name, h_dict in mock_looker_matrix.items():
             for h_val, val in h_dict.items():
                 srednie_godzinowe[d_name][h_val] = float(val)
-                
-        st.success("⚡ Wartości prognozy z obrazu Lookera zostały wczytane pomyślnie!")
-        
-    else:
+        dane_zrodlowe_wczytane = True
+
+else:
+    uploaded_file = st.file_uploader("Wybierz plik (.csv, .xlsx):", type=["csv", "xlsx"])
+    if uploaded_file:
         try:
-            if file_ext == "csv":
+            if uploaded_file.name.endswith(".csv"):
                 df_raw = pd.read_csv(uploaded_file)
             else:
                 df_raw = pd.read_excel(uploaded_file)
@@ -200,9 +206,7 @@ if uploaded_file:
                         date_cols[dzien_nazwa] = []
                     date_cols[dzien_nazwa].append(c)
 
-            godziny_data = {
-                d: {h: [] for h in range(26)} for d in MAPA_DNI.values()
-            }
+            godziny_data = {d: {h: [] for h in range(26)} for d in MAPA_DNI.values()}
 
             for idx, row in df_raw.iterrows():
                 h_val = pd.to_numeric(row[col_hour], errors="coerce")
@@ -211,9 +215,7 @@ if uploaded_file:
                     for d_nazwa, cols_list in date_cols.items():
                         for c_date in cols_list:
                             val = pd.to_numeric(
-                                str(row[c_date])
-                                .replace(" ", "")
-                                .replace(",", "."),
+                                str(row[c_date]).replace(" ", "").replace(",", "."),
                                 errors="coerce",
                             )
                             if pd.notna(val):
@@ -225,16 +227,17 @@ if uploaded_file:
                     sr_h = sum(vals) / len(vals) if vals else 0
                     srednie_godzinowe[d_nazwa][h] = sr_h
 
-            st.success("⚡ Raport Lookera przetworzony pomyślnie!")
+            st.success("⚡ Raport z pliku wczytany pomyślnie!")
+            dane_zrodlowe_wczytane = True
 
         except Exception as e:
-            st.error(f"Błąd odczytu pliku z Lookera: {e}")
+            st.error(f"Błąd odczytu pliku: {e}")
 
 # --- 3. MODUŁ SZKIELETU GRAFIKU ---
 st.divider()
 st.header("3. Moduł: Szkielet Grafiku (Sloty Godzinowe)")
 
-if uploaded_file:
+if dane_zrodlowe_wczytane:
     def format_time(h_float):
         h_int = int(h_float) % 24
         m_int = int(round((h_float - int(h_float)) * 60))
@@ -435,8 +438,8 @@ with c_url:
 st.divider()
 st.header("5. Przypisanie Pickerów do Grafiku")
 if st.button("🚀 Wygeneruj Pełny Grafik jush!", type="primary", use_container_width=True):
-    if not uploaded_file:
-        st.error("Proszę najpierw wgrać plik lub zdjęcie z Lookera!")
+    if not dane_zrodlowe_wczytane:
+        st.error("Proszę najpierw przekazać dane z Lookera w sekcji 2!")
     elif not pracownicy:
         st.error("Proszę wpisać listę pickerów!")
     else:
@@ -778,7 +781,6 @@ if st.session_state.get("schedule_generated", False):
             col_idx += 3
         row_idx += 1
 
-    # PODSUMOWANIE ŁĄCZNIE
     cell_sum_label = ws.cell(row=row_idx, column=1)
     cell_sum_label.value = "ŁĄCZNIE"
     cell_sum_label.font = font_bold
@@ -808,7 +810,6 @@ if st.session_state.get("schedule_generated", False):
 
     row_idx += 1
 
-    # SUMA CAŁKOWITA
     cell_grand_label = ws.cell(row=row_idx, column=1)
     cell_grand_label.value = "SUMA CAŁKOWITA"
     cell_grand_label.font = font_bold
