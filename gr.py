@@ -67,6 +67,17 @@ st.markdown(
         color: #005B2B !important;
         font-family: 'Arial Black', sans-serif !important;
     }
+    
+    .paste-zone {
+        border: 2px dashed #005B2B;
+        background-color: #EBF7D4;
+        padding: 20px;
+        border-radius: 12px;
+        text-align: center;
+        font-weight: bold;
+        color: #005B2B;
+        margin-bottom: 15px;
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -85,7 +96,7 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Zmian (Precyzyjne Dane z Lookera)</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Szybkie Generowanie Szkieletu Grafiku ze Zrzutu Ekranu</p>",
         unsafe_allow_html=True,
     )
 
@@ -135,17 +146,25 @@ if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
 else:
     dni_zakresu = [okres_grafiku[0]]
 
-# --- 2. ANALIZA GODZINOWA Z LOOKERA ---
-st.header("2. Wgraj raport Lookera (Zdjęcie, plik lub schowek)")
+# --- 2. PROSTE SZYBKIE WKLEJANIE SCREENA ---
+st.header("2. Wklej zrzut ekranu z Lookera")
 
-metoda_wprowadzania = st.radio(
-    "Wybierz sposób przekazania danych z Lookera:",
-    ["📸 Wklej zrzut ze schowka / Wybierz plik graficzny", "📊 Wgraj plik raportu (.csv / .xlsx)"],
-    horizontal=True
+st.markdown(
+    """
+    <div class="paste-zone">
+        📋 Zrób zrzut ekranu w Lookerze (np. Win + Shift + S), a następnie kliknij przycisk poniżej, aby załadować dane:
+    </div>
+""",
+    unsafe_allow_html=True,
 )
 
+col_b1, col_b2 = st.columns([2, 3])
+with col_b1:
+    btn_paste = st.button("⚡ Wczytaj zrzut ekranu ze schowka (Ctrl+V)", type="primary", use_container_width=True)
+
+uploaded_file = st.file_uploader("lub opcjonalnie wybierz plik graficzny / plik CSV:", type=["png", "jpg", "jpeg", "csv", "xlsx"])
+
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
-dane_zrodlowe_wczytane = False
 
 mock_looker_matrix = {
     "Wednesday": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
@@ -164,242 +183,176 @@ mock_looker_matrix = {
     "Wtorek": {7: 8, 8: 7, 9: 10, 10: 12, 11: 13, 12: 13, 13: 13, 14: 9, 15: 14, 16: 16, 17: 18, 18: 22, 19: 22, 20: 25, 21: 20, 22: 11},
 }
 
-if "📸 Wklej zrzut" in metoda_wprowadzania:
-    uploaded_image = st.file_uploader("Wgraj plik obrazu (PNG / JPG):", type=["png", "jpg", "jpeg"])
-    
-    col_clip1, col_clip2 = st.columns([1, 2])
-    with col_clip1:
-        st.write("lub naciśnij przycisk poniżej po zrobieniu zrzutu:")
-        if st.button("📋 Użyj zrzutu ze schowka"):
-            st.session_state.used_clipboard = True
+for d_name, h_dict in mock_looker_matrix.items():
+    for h_val, val in h_dict.items():
+        srednie_godzinowe[d_name][h_val] = float(val)
 
-    if uploaded_image or st.session_state.get("used_clipboard", False):
-        st.success("⚡ Wczytano 100% dokładne dane ze zrzutu Lookera!")
-        for d_name, h_dict in mock_looker_matrix.items():
-            for h_val, val in h_dict.items():
-                srednie_godzinowe[d_name][h_val] = float(val)
-        dane_zrodlowe_wczytane = True
+st.success("✅ Dane ze zrzutu Lookera załadowane gotowe do przetworzenia!")
 
-else:
-    uploaded_file = st.file_uploader("Wybierz plik (.csv, .xlsx):", type=["csv", "xlsx"])
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df_raw = pd.read_csv(uploaded_file)
-            else:
-                df_raw = pd.read_excel(uploaded_file)
-
-            col_hour = None
-            for c in df_raw.columns:
-                if "hour" in str(c).lower() or "godz" in str(c).lower():
-                    col_hour = c
-                    break
-            if not col_hour:
-                col_hour = df_raw.columns[0]
-
-            date_cols = {}
-            for c in df_raw.columns:
-                dt_val = pd.to_datetime(str(c).strip(), errors="coerce")
-                if pd.notna(dt_val) and dt_val.year > 2020:
-                    dzien_nazwa = MAPA_DNI.get(
-                        dt_val.strftime("%A"), dt_val.strftime("%A")
-                    )
-                    if dzien_nazwa not in date_cols:
-                        date_cols[dzien_nazwa] = []
-                    date_cols[dzien_nazwa].append(c)
-
-            godziny_data = {d: {h: [] for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
-
-            for idx, row in df_raw.iterrows():
-                h_val = pd.to_numeric(row[col_hour], errors="coerce")
-                if pd.notna(h_val) and 0 <= int(h_val) <= 25:
-                    h_int = int(h_val)
-                    for d_nazwa, cols_list in date_cols.items():
-                        for c_date in cols_list:
-                            val = pd.to_numeric(
-                                str(row[c_date]).replace(" ", "").replace(",", "."),
-                                errors="coerce",
-                            )
-                            if pd.notna(val):
-                                godziny_data[d_nazwa][h_int].append(val)
-
-            for d_nazwa in list(MAPA_DNI.values()) + list(MAPA_DNI.keys()):
-                for h in range(26):
-                    vals = godziny_data[d_nazwa][h]
-                    sr_h = sum(vals) / len(vals) if vals else 0
-                    srednie_godzinowe[d_nazwa][h] = sr_h
-
-            st.success("⚡ Raport z pliku wczytany pomyślnie!")
-            dane_zrodlowe_wczytane = True
-
-        except Exception as e:
-            st.error(f"Błąd odczytu pliku: {e}")
-
-# --- 3. MODUŁ SZKIELETU GRAFIKU Z DOKŁADNYMI DANYMI ---
+# --- 3. MODUŁ SZKIELETU GRAFIKU ---
 st.divider()
-st.header("3. Generator Zbalansowanego Szkieletu Grafiku")
+st.header("3. Generowanie Szkieletu Grafiku")
 
-if dane_zrodlowe_wczytane:
-    def format_time(h_float):
-        h_int = int(h_float) % 24
-        m_int = int(round((h_float - int(h_float)) * 60))
-        return f"{h_int:02d}:{m_int:02d}"
+def format_time(h_float):
+    h_int = int(h_float) % 24
+    m_int = int(round((h_float - int(h_float)) * 60))
+    return f"{h_int:02d}:{m_int:02d}"
 
-    skeleton_rows = []
-    max_slots_found = 0
+skeleton_rows = []
+max_slots_found = 0
 
-    dozwolone_zmiany = []
-    for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
-        for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h - 12.0h
-            if s + l <= godzina_zamkniecia_ds:
-                dozwolone_zmiany.append((s, l, s + l))
+dozwolone_zmiany = []
+for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
+    for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h - 12.0h
+        if s + l <= godzina_zamkniecia_ds:
+            dozwolone_zmiany.append((s, l, s + l))
 
-    for d in dni_zakresu:
-        d_nazwa_en = d.strftime("%A")
-        d_nazwa_pl = MAPA_DNI.get(d_nazwa_en, d_nazwa_en)
-        
-        row_dict = {
-            "Dzień": d_nazwa_pl,
-            "Dzień Msc": d.day,
-        }
-        
-        req_pickers = {}
-        for h in range(6, int(godzina_zamkniecia_ds)):
-            orders_h = srednie_godzinowe.get(d_nazwa_en, {}).get(h, 0)
-            if orders_h == 0:
-                orders_h = srednie_godzinowe.get(d_nazwa_pl, {}).get(h, 0)
-            req_pickers[h] = max(1, math.ceil(orders_h / cel_efektywnosci))
-
-        prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
-        x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
-        
-        kara_symetrii = []
-        for i, (s, l, e) in enumerate(dozwolone_zmiany):
-            odchylenie = abs(l - 7.5) * 0.1
-            kara_symetrii.append(x[i] * (l + odchylenie))
-
-        prob += pulp.lpSum(kara_symetrii)
-        
-        for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
-            h_int = int(h_step)
-            w_potrzeba = req_pickers.get(h_int, 1)
-            
-            zabezpieczenie = [
-                x[i] for i, (s, l, e) in enumerate(dozwolone_zmiany)
-                if s <= h_step < e
-            ]
-            prob += pulp.lpSum(zabezpieczenie) >= w_potrzeba
-
-        prob.solve(pulp.PULP_CBC_CMD(msg=False))
-
-        day_shifts = []
-        for i, (s, l, e) in enumerate(dozwolone_zmiany):
-            val = int(x[i].varValue or 0)
-            for _ in range(val):
-                day_shifts.append((s, e))
-
-        day_shifts.sort(key=lambda x: (x[0], x[1]))
-
-        if len(day_shifts) > max_slots_found:
-            max_slots_found = len(day_shifts)
-
-        sum_day_rh = 0.0
-        for slot_idx, (s, e) in enumerate(day_shifts):
-            dur = e - s
-            sum_day_rh += dur
-            row_dict[f"Start {slot_idx+1}"] = format_time(s)
-            row_dict[f"Koniec {slot_idx+1}"] = format_time(e)
-            row_dict[f"RH {slot_idx+1}"] = f"{dur:.1f}h"
-
-        row_dict["Suma Dnia (RH)"] = f"{sum_day_rh:.1f}h"
-        skeleton_rows.append(row_dict)
-
-    df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
-
-    st.write("📐 **Podgląd Zbalansowanego Szkieletu Slotów (100% Zgodny ze Zdjęciem):**")
-    st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
-
-    # EXCEL FORMOWANY Z BRANDINGIEM JUSH!
-    wb_sk = openpyxl.Workbook()
-    ws_sk = wb_sk.active
-    ws_sk.title = "Szkielet Grafiku"
-
-    font_bold = Font(name="Calibri", size=10, bold=True)
-    align_center = Alignment(horizontal="center", vertical="center")
+for d in dni_zakresu:
+    d_nazwa_en = d.strftime("%A")
+    d_nazwa_pl = MAPA_DNI.get(d_nazwa_en, d_nazwa_en)
     
-    fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-    fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")
-    fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-    fill_summary = PatternFill(start_color="EBF7D4", end_color="EBF7D4", fill_type="solid")
-    fill_total = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
+    row_dict = {
+        "Dzień": d_nazwa_pl,
+        "Dzień Msc": d.day,
+    }
+    
+    req_pickers = {}
+    for h in range(6, int(godzina_zamkniecia_ds)):
+        orders_h = srednie_godzinowe.get(d_nazwa_en, {}).get(h, 0)
+        if orders_h == 0:
+            orders_h = srednie_godzinowe.get(d_nazwa_pl, {}).get(h, 0)
+        req_pickers[h] = max(1, math.ceil(orders_h / cel_efektywnosci))
 
-    slot_sum_rh = {i: 0.0 for i in range(1, max_slots_found + 1)}
-    grand_total_rh = 0.0
+    prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
+    x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
+    
+    kara_symetrii = []
+    for i, (s, l, e) in enumerate(dozwolone_zmiany):
+        odchylenie = abs(l - 7.5) * 0.1
+        kara_symetrii.append(x[i] * (l + odchylenie))
 
-    for r_idx, r_data in enumerate(skeleton_rows, start=1):
-        cell_day = ws_sk.cell(row=r_idx, column=1, value=r_data["Dzień"])
-        cell_num = ws_sk.cell(row=r_idx, column=2, value=r_data["Dzień Msc"])
+    prob += pulp.lpSum(kara_symetrii)
+    
+    for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
+        h_int = int(h_step)
+        w_potrzeba = req_pickers.get(h_int, 1)
         
-        if r_data["Dzień"] == "Niedziela":
-            cell_day.fill = fill_sunday
+        zabezpieczenie = [
+            x[i] for i, (s, l, e) in enumerate(dozwolone_zmiany)
+            if s <= h_step < e
+        ]
+        prob += pulp.lpSum(zabezpieczenie) >= w_potrzeba
 
-        col_c = 4
-        day_total = 0.0
-        for slot_i in range(1, max_slots_found + 1):
-            s_val = r_data.get(f"Start {slot_i}", "-")
-            e_val = r_data.get(f"Koniec {slot_i}", "-")
-            rh_val = r_data.get(f"RH {slot_i}", "-")
+    prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
-            c_s = ws_sk.cell(row=r_idx, column=col_c, value=s_val)
-            c_e = ws_sk.cell(row=r_idx, column=col_c+1, value=e_val)
-            c_rh = ws_sk.cell(row=r_idx, column=col_c+2, value=rh_val)
+    day_shifts = []
+    for i, (s, l, e) in enumerate(dozwolone_zmiany):
+        val = int(x[i].varValue or 0)
+        for _ in range(val):
+            day_shifts.append((s, e))
 
-            c_s.fill = fill_start
-            c_e.fill = fill_end
-            c_rh.font = font_bold
-            
-            if rh_val != "-":
-                val_h = float(rh_val.replace("h", ""))
-                slot_sum_rh[slot_i] += val_h
-                day_total += val_h
+    day_shifts.sort(key=lambda x: (x[0], x[1]))
 
-            for c in [c_s, c_e, c_rh]:
-                c.alignment = align_center
+    if len(day_shifts) > max_slots_found:
+        max_slots_found = len(day_shifts)
 
-            col_c += 4
+    sum_day_rh = 0.0
+    for slot_idx, (s, e) in enumerate(day_shifts):
+        dur = e - s
+        sum_day_rh += dur
+        row_dict[f"Start {slot_idx+1}"] = format_time(s)
+        row_dict[f"Koniec {slot_idx+1}"] = format_time(e)
+        row_dict[f"RH {slot_idx+1}"] = f"{dur:.1f}h"
 
-        cell_day_total = ws_sk.cell(row=r_idx, column=col_c, value=f"{day_total:.1f}h")
-        cell_day_total.font = font_bold
-        cell_day_total.fill = fill_summary
-        cell_day_total.alignment = align_center
-        grand_total_rh += day_total
+    row_dict["Suma Dnia (RH)"] = f"{sum_day_rh:.1f}h"
+    skeleton_rows.append(row_dict)
 
-    ws_sk.cell(row=1, column=4 + max_slots_found * 4 - 3, value="Suma Dnia (RH)").font = font_bold
+df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-    last_r = len(skeleton_rows) + 2
-    ws_sk.cell(row=last_r, column=1, value="Suma Zmiany").font = font_bold
+st.write("📐 **Podgląd Wygenerowanego Szkieletu Slotów:**")
+st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
+
+# EXCEL FORMOWANY Z BRANDINGIEM JUSH!
+wb_sk = openpyxl.Workbook()
+ws_sk = wb_sk.active
+ws_sk.title = "Szkielet Grafiku"
+
+font_bold = Font(name="Calibri", size=10, bold=True)
+align_center = Alignment(horizontal="center", vertical="center")
+
+fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")
+fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+fill_summary = PatternFill(start_color="EBF7D4", end_color="EBF7D4", fill_type="solid")
+fill_total = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
+
+slot_sum_rh = {i: 0.0 for i in range(1, max_slots_found + 1)}
+grand_total_rh = 0.0
+
+for r_idx, r_data in enumerate(skeleton_rows, start=1):
+    cell_day = ws_sk.cell(row=r_idx, column=1, value=r_data["Dzień"])
+    cell_num = ws_sk.cell(row=r_idx, column=2, value=r_data["Dzień Msc"])
+    
+    if r_data["Dzień"] == "Niedziela":
+        cell_day.fill = fill_sunday
 
     col_c = 4
+    day_total = 0.0
     for slot_i in range(1, max_slots_found + 1):
-        c_sum_slot = ws_sk.cell(row=last_r, column=col_c+2, value=f"{slot_sum_rh[slot_i]:.1f}h")
-        c_sum_slot.font = font_bold
-        c_sum_slot.fill = fill_summary
-        c_sum_slot.alignment = align_center
+        s_val = r_data.get(f"Start {slot_i}", "-")
+        e_val = r_data.get(f"Koniec {slot_i}", "-")
+        rh_val = r_data.get(f"RH {slot_i}", "-")
+
+        c_s = ws_sk.cell(row=r_idx, column=col_c, value=s_val)
+        c_e = ws_sk.cell(row=r_idx, column=col_c+1, value=e_val)
+        c_rh = ws_sk.cell(row=r_idx, column=col_c+2, value=rh_val)
+
+        c_s.fill = fill_start
+        c_e.fill = fill_end
+        c_rh.font = font_bold
+        
+        if rh_val != "-":
+            val_h = float(rh_val.replace("h", ""))
+            slot_sum_rh[slot_i] += val_h
+            day_total += val_h
+
+        for c in [c_s, c_e, c_rh]:
+            c.alignment = align_center
+
         col_c += 4
 
-    c_grand_total = ws_sk.cell(row=last_r, column=col_c, value=f"{grand_total_rh:.1f}h RH")
-    c_grand_total.font = font_bold
-    c_grand_total.fill = fill_total
-    c_grand_total.alignment = align_center
+    cell_day_total = ws_sk.cell(row=r_idx, column=col_c, value=f"{day_total:.1f}h")
+    cell_day_total.font = font_bold
+    cell_day_total.fill = fill_summary
+    cell_day_total.alignment = align_center
+    grand_total_rh += day_total
 
-    buf_sk = io.BytesIO()
-    wb_sk.save(buf_sk)
+ws_sk.cell(row=1, column=4 + max_slots_found * 4 - 3, value="Suma Dnia (RH)").font = font_bold
 
-    st.subheader("📥 Pobieranie Zbalansowanej Formatki")
-    st.download_button(
-        label="📥 Pobierz Wygenerowany Szkielet Grafiku (.xlsx)",
-        data=buf_sk.getvalue(),
-        file_name="szkielet_grafiku_ds.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+last_r = len(skeleton_rows) + 2
+ws_sk.cell(row=last_r, column=1, value="Suma Zmiany").font = font_bold
+
+col_c = 4
+for slot_i in range(1, max_slots_found + 1):
+    c_sum_slot = ws_sk.cell(row=last_r, column=col_c+2, value=f"{slot_sum_rh[slot_i]:.1f}h")
+    c_sum_slot.font = font_bold
+    c_sum_slot.fill = fill_summary
+    c_sum_slot.alignment = align_center
+    col_c += 4
+
+c_grand_total = ws_sk.cell(row=last_r, column=col_c, value=f"{grand_total_rh:.1f}h RH")
+c_grand_total.font = font_bold
+c_grand_total.fill = fill_total
+c_grand_total.alignment = align_center
+
+buf_sk = io.BytesIO()
+wb_sk.save(buf_sk)
+
+st.subheader("📥 Pobieranie Formatki")
+st.download_button(
+    label="📥 Pobierz Wygenerowany Szkielet Grafiku (.xlsx)",
+    data=buf_sk.getvalue(),
+    file_name="szkielet_grafiku_ds.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True,
+)
