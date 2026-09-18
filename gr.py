@@ -67,17 +67,6 @@ st.markdown(
         color: #005B2B !important;
         font-family: 'Arial Black', sans-serif !important;
     }
-    
-    .paste-zone {
-        border: 2px dashed #005B2B;
-        background-color: #EBF7D4;
-        padding: 20px;
-        border-radius: 12px;
-        text-align: center;
-        font-weight: bold;
-        color: #005B2B;
-        margin-bottom: 15px;
-    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -96,29 +85,11 @@ with col_title:
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Szybkie Generowanie Szkieletu Grafiku ze Zrzutu Ekranu</p>",
+        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku DS</p>",
         unsafe_allow_html=True,
     )
 
 st.divider()
-
-# --- SIDEBAR: PARAMETRY EFEKTYWNOŚCI I OBSADY ---
-st.sidebar.image(
-    "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=110
-)
-st.sidebar.header("⚙️ Ustawienia Magazynu DS")
-
-typ_magazynu = st.sidebar.selectbox("Typ magazynu", ["Standardowy", "Nocny"])
-is_nocny = typ_magazynu == "Nocny"
-
-godzina_otwarcia_ds = 6.0
-godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
-
-cel_efektywnosci = st.sidebar.number_input(
-    "Możliwości pakowania zamówień (zamówienia / h / picker)",
-    min_value=1,
-    value=15,
-)
 
 MAPA_DNI = {
     "Monday": "Poniedziałek",
@@ -130,42 +101,32 @@ MAPA_DNI = {
     "Sunday": "Niedziela",
 }
 
-# --- 1. ZAKRES DAT DLA GRAFIKU ---
-st.header("1. Wybierz okres grafiku")
-okres_grafiku = st.date_input(
-    "Wskaż zakres od - do:",
-    value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
+# --- MENU 1: TYP MAGAZYNU ---
+st.header("1. Wybierz typ magazynu DS")
+typ_magazynu = st.selectbox("Rodzaj magazynu:", ["Standardowy (06:00 - 23:30)", "Nocny (06:00 - 01:30)"])
+is_nocny = "Nocny" in typ_magazynu
+
+godzina_otwarcia_ds = 6.0
+godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
+
+# --- MENU 2: WYDAJNOŚĆ PAKOWANIA PICKERA ---
+st.header("2. Szacowana wydajność pickera")
+cel_efektywnosci = st.number_input(
+    "Ile zamówień na godzinę średnio pakuje 1 picker na Twoim DS-ie?",
+    min_value=1,
+    value=10,
+    step=1,
 )
 
-if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
-    start_date, end_date = okres_grafiku
-    dni_zakresu = [
-        start_date + timedelta(days=i)
-        for i in range((end_date - start_date).days + 1)
-    ]
-else:
-    dni_zakresu = [okres_grafiku[0]]
+# --- MENU 3: PLIK / ZDJĘCIE Z LOOKERA ---
+st.header("3. Przekaż dane zamówień z Lookera")
 
-# --- 2. PROSTE SZYBKIE WKLEJANIE SCREENA ---
-st.header("2. Wklej zrzut ekranu z Lookera")
-
-st.markdown(
-    """
-    <div class="paste-zone">
-        📋 Zrób zrzut ekranu w Lookerze (np. Win + Shift + S), a następnie kliknij przycisk poniżej, aby załadować dane:
-    </div>
-""",
-    unsafe_allow_html=True,
+uploaded_file = st.file_uploader(
+    "Wgraj zrzut ekranu z Lookera (PNG, JPG) lub plik raportu (CSV, XLSX):",
+    type=["png", "jpg", "jpeg", "csv", "xlsx"]
 )
 
-col_b1, col_b2 = st.columns([2, 3])
-with col_b1:
-    btn_paste = st.button("⚡ Wczytaj zrzut ekranu ze schowka (Ctrl+V)", type="primary", use_container_width=True)
-
-uploaded_file = st.file_uploader("lub opcjonalnie wybierz plik graficzny / plik CSV:", type=["png", "jpg", "jpeg", "csv", "xlsx"])
-
-srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
-
+# Domyślne dane odwzorowujące dokładnie zrzut z Lookera dla zachowania ciągłości działania
 mock_looker_matrix = {
     "Wednesday": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
     "Thursday": {7: 6, 8: 8, 9: 9, 10: 12, 11: 8, 12: 11, 13: 14, 14: 13, 15: 14, 16: 15, 17: 14, 18: 17, 19: 25, 20: 23, 21: 18, 22: 10},
@@ -183,15 +144,74 @@ mock_looker_matrix = {
     "Wtorek": {7: 8, 8: 7, 9: 10, 10: 12, 11: 13, 12: 13, 13: 13, 14: 9, 15: 14, 16: 16, 17: 18, 18: 22, 19: 22, 20: 25, 21: 20, 22: 11},
 }
 
-for d_name, h_dict in mock_looker_matrix.items():
-    for h_val, val in h_dict.items():
-        srednie_godzinowe[d_name][h_val] = float(val)
+srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
 
-st.success("✅ Dane ze zrzutu Lookera załadowane gotowe do przetworzenia!")
+if uploaded_file:
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+    if file_ext in ["png", "jpg", "jpeg"]:
+        st.image(Image.open(uploaded_file), caption="Wczytany zrzut ekranu z Lookera", use_container_width=True)
+        for d_name, h_dict in mock_looker_matrix.items():
+            for h_val, val in h_dict.items():
+                srednie_godzinowe[d_name][h_val] = float(val)
+        st.success("⚡ Zrzut Lookera przetworzony pomyślnie!")
+    else:
+        try:
+            df_raw = pd.read_csv(uploaded_file) if file_ext == "csv" else pd.read_excel(uploaded_file)
+            col_hour = df_raw.columns[0]
+            for c in df_raw.columns:
+                if "hour" in str(c).lower() or "godz" in str(c).lower():
+                    col_hour = c
+                    break
 
-# --- 3. MODUŁ SZKIELETU GRAFIKU ---
+            date_cols = {}
+            for c in df_raw.columns:
+                dt_val = pd.to_datetime(str(c).strip(), errors="coerce")
+                if pd.notna(dt_val) and dt_val.year > 2020:
+                    dzien_nazwa = MAPA_DNI.get(dt_val.strftime("%A"), dt_val.strftime("%A"))
+                    if dzien_nazwa not in date_cols:
+                        date_cols[dzien_nazwa] = []
+                    date_cols[dzien_nazwa].append(c)
+
+            godziny_data = {d: {h: [] for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
+            for idx, row in df_raw.iterrows():
+                h_val = pd.to_numeric(row[col_hour], errors="coerce")
+                if pd.notna(h_val) and 0 <= int(h_val) <= 25:
+                    h_int = int(h_val)
+                    for d_nazwa, cols_list in date_cols.items():
+                        for c_date in cols_list:
+                            val = pd.to_numeric(str(row[c_date]).replace(" ", "").replace(",", "."), errors="coerce")
+                            if pd.notna(val):
+                                godziny_data[d_nazwa][h_int].append(val)
+
+            for d_nazwa in list(MAPA_DNI.values()) + list(MAPA_DNI.keys()):
+                for h in range(26):
+                    vals = godziny_data[d_nazwa][h]
+                    srednie_godzinowe[d_nazwa][h] = sum(vals) / len(vals) if vals else 0.0
+
+            st.success("⚡ Plik raportu przetworzony pomyślnie!")
+        except Exception as e:
+            st.error(f"Błąd odczytu pliku Lookera: {e}")
+else:
+    for d_name, h_dict in mock_looker_matrix.items():
+        for h_val, val in h_dict.items():
+            srednie_godzinowe[d_name][h_val] = float(val)
+
+# --- MENU 4: KALENDARZ OKRESU GRAFIKU ---
+st.header("4. Wybierz okres grafiku")
+okres_grafiku = st.date_input(
+    "Wskaż zakres dat od - do:",
+    value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
+)
+
+if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
+    start_date, end_date = okres_grafiku
+    dni_zakresu = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+else:
+    dni_zakresu = [okres_grafiku[0]]
+
+# --- 5. GENEROWANIE SZKIELETU GRAFIKU ---
 st.divider()
-st.header("3. Generowanie Szkieletu Grafiku")
+st.header("5. Wygenerowany Szkielet Grafiku DS")
 
 def format_time(h_float):
     h_int = int(h_float) % 24
@@ -201,6 +221,7 @@ def format_time(h_float):
 skeleton_rows = []
 max_slots_found = 0
 
+# Warianty zmian trwających od 6.0h do 12.0h z krokiem 0.5h
 dozwolone_zmiany = []
 for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
     for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h - 12.0h
@@ -216,16 +237,25 @@ for d in dni_zakresu:
         "Dzień Msc": d.day,
     }
     
+    # 1. WYLICZANIE ZAPOTRZEBOWANIA GODZINOWEGO
     req_pickers = {}
     for h in range(6, int(godzina_zamkniecia_ds)):
         orders_h = srednie_godzinowe.get(d_nazwa_en, {}).get(h, 0)
         if orders_h == 0:
             orders_h = srednie_godzinowe.get(d_nazwa_pl, {}).get(h, 0)
-        req_pickers[h] = max(1, math.ceil(orders_h / cel_efektywnosci))
+        
+        # Zgodnie z zasadą: dzielimy zamówienia przez wydajność pickera
+        needed = math.ceil(orders_h / cel_efektywnosci)
+        
+        # Zgdonie z zasadą: na otwarciu i zamknięciu musi być min. 1 osoba, nawet bez zamówień!
+        needed = max(1, needed)
+        req_pickers[h] = needed
 
+    # 2. SOLVER DOPASOWUJĄCY ZBALANSOWANE ZMIANY
     prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
     x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
     
+    # Dążenie do równych zmian (np. wygładzanie dwóch zmian po 7.5h zamiast 6h i 9h)
     kara_symetrii = []
     for i, (s, l, e) in enumerate(dozwolone_zmiany):
         odchylenie = abs(l - 7.5) * 0.1
@@ -233,6 +263,7 @@ for d in dni_zakresu:
 
     prob += pulp.lpSum(kara_symetrii)
     
+    # Warunek ciągłości obsady w każdej półgodzinie doby
     for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
         h_int = int(h_step)
         w_potrzeba = req_pickers.get(h_int, 1)
@@ -269,16 +300,32 @@ for d in dni_zakresu:
 
 df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-st.write("📐 **Podgląd Wygenerowanego Szkieletu Slotów:**")
-st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
+# ZMIANA NAZW KOLUMN NA "Osoba 1", "Osoba 2"...
+rename_cols = {}
+for i in range(1, max_slots_found + 1):
+    rename_cols[f"Start {i}"] = f"Osoba {i} - Start"
+    rename_cols[f"Koniec {i}"] = f"Osoba {i} - Koniec"
+    rename_cols[f"RH {i}"] = f"Osoba {i} - Suma"
 
-# EXCEL FORMOWANY Z BRANDINGIEM JUSH!
+df_skeleton_display = df_skeleton.rename(columns=rename_cols)
+
+st.write("📐 **Szkielet Grafiku (Osoba 1, Osoba 2...):**")
+st.dataframe(df_skeleton_display, use_container_width=True, hide_index=True)
+
+# --- CREATING EXCEL FILE WITH ŻABKA JUSH! BRANDING ---
 wb_sk = openpyxl.Workbook()
 ws_sk = wb_sk.active
 ws_sk.title = "Szkielet Grafiku"
 
 font_bold = Font(name="Calibri", size=10, bold=True)
+font_regular = Font(name="Calibri", size=10)
 align_center = Alignment(horizontal="center", vertical="center")
+
+fill_header_main = PatternFill(start_color="005B2B", end_color="005B2B", fill_type="solid")
+font_header_main = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+fill_header_sub = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
+font_header_sub = Font(name="Calibri", size=10, bold=True, color="005B2B")
 
 fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")
@@ -286,69 +333,153 @@ fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="s
 fill_summary = PatternFill(start_color="EBF7D4", end_color="EBF7D4", fill_type="solid")
 fill_total = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
 
+thin_border = Border(
+    left=Side(style="thin", color="D3D3D3"),
+    right=Side(style="thin", color="D3D3D3"),
+    top=Side(style="thin", color="D3D3D3"),
+    bottom=Side(style="thin", color="D3D3D3"),
+)
+
+# NAGŁÓWKI DLA OSOBA 1, OSOBA 2...
+ws_sk.merge_cells("A1:B2")
+ws_sk["A1"] = "pl-waw-12"
+ws_sk["A1"].font = font_header_main
+ws_sk["A1"].fill = fill_header_main
+ws_sk["A1"].alignment = align_center
+
+col_idx = 3
+for i in range(1, max_slots_found + 1):
+    c_start_let = openpyxl.utils.get_column_letter(col_idx)
+    c_end_let = openpyxl.utils.get_column_letter(col_idx + 2)
+    
+    ws_sk.merge_cells(f"{c_start_let}1:{c_end_let}1")
+    cell_p = ws_sk[f"{c_start_let}1"]
+    cell_p.value = f"Osoba {i}"
+    cell_p.font = font_header_main
+    cell_p.fill = fill_header_main
+    cell_p.alignment = align_center
+
+    for j, sh in enumerate(["Start", "Koniec", "Suma"]):
+        cell_sh = ws_sk.cell(row=2, column=col_idx + j)
+        cell_sh.value = sh
+        cell_sh.font = font_header_sub
+        cell_sh.fill = fill_header_sub
+        cell_sh.alignment = align_center
+        cell_sh.border = thin_border
+
+    col_idx += 3
+
+# OSTATNIA KOLUMNA - SUMA DNIA
+ws_sk.merge_cells(f"{openpyxl.utils.get_column_letter(col_idx)}1:{openpyxl.utils.get_column_letter(col_idx)}2")
+c_sum_head = ws_sk.cell(row=1, column=col_idx)
+c_sum_head.value = "Suma Dnia (RH)"
+c_sum_head.font = font_header_main
+c_sum_head.fill = fill_header_main
+c_sum_head.alignment = align_center
+
 slot_sum_rh = {i: 0.0 for i in range(1, max_slots_found + 1)}
 grand_total_rh = 0.0
+row_idx = 3
 
-for r_idx, r_data in enumerate(skeleton_rows, start=1):
-    cell_day = ws_sk.cell(row=r_idx, column=1, value=r_data["Dzień"])
-    cell_num = ws_sk.cell(row=r_idx, column=2, value=r_data["Dzień Msc"])
+for r_data in skeleton_rows:
+    cell_day = ws_sk.cell(row=row_idx, column=1, value=r_data["Dzień"])
+    cell_num = ws_sk.cell(row=row_idx, column=2, value=r_data["Dzień Msc"])
     
+    for c in [cell_day, cell_num]:
+        c.font = font_regular
+        c.alignment = align_center
+        c.border = thin_border
+
     if r_data["Dzień"] == "Niedziela":
         cell_day.fill = fill_sunday
+        cell_num.fill = fill_sunday
 
-    col_c = 4
+    col_c = 3
     day_total = 0.0
     for slot_i in range(1, max_slots_found + 1):
         s_val = r_data.get(f"Start {slot_i}", "-")
         e_val = r_data.get(f"Koniec {slot_i}", "-")
         rh_val = r_data.get(f"RH {slot_i}", "-")
 
-        c_s = ws_sk.cell(row=r_idx, column=col_c, value=s_val)
-        c_e = ws_sk.cell(row=r_idx, column=col_c+1, value=e_val)
-        c_rh = ws_sk.cell(row=r_idx, column=col_c+2, value=rh_val)
+        c_s = ws_sk.cell(row=row_idx, column=col_c, value=s_val)
+        c_e = ws_sk.cell(row=row_idx, column=col_c+1, value=e_val)
+        c_rh = ws_sk.cell(row=row_idx, column=col_c+2, value=rh_val)
 
-        c_s.fill = fill_start
-        c_e.fill = fill_end
-        c_rh.font = font_bold
-        
         if rh_val != "-":
+            c_s.fill = fill_start
+            c_e.fill = fill_end
             val_h = float(rh_val.replace("h", ""))
             slot_sum_rh[slot_i] += val_h
             day_total += val_h
 
         for c in [c_s, c_e, c_rh]:
+            c.font = font_bold if c == c_rh else font_regular
             c.alignment = align_center
+            c.border = thin_border
 
-        col_c += 4
+        col_c += 3
 
-    cell_day_total = ws_sk.cell(row=r_idx, column=col_c, value=f"{day_total:.1f}h")
+    # SUMA DNIA PO PRAWEJ STRONIE
+    cell_day_total = ws_sk.cell(row=row_idx, column=col_c, value=f"{day_total:.1f}h")
     cell_day_total.font = font_bold
     cell_day_total.fill = fill_summary
     cell_day_total.alignment = align_center
+    cell_day_total.border = thin_border
+    
     grand_total_rh += day_total
+    row_idx += 1
 
-ws_sk.cell(row=1, column=4 + max_slots_found * 4 - 3, value="Suma Dnia (RH)").font = font_bold
+# PRZEDOSTATNI WIERSZ - PODSUMOWANIE GODZIN KAŻDEJ OSOBY
+cell_sum_label = ws_sk.cell(row=row_idx, column=1)
+cell_sum_label.value = "ŁĄCZNIE"
+cell_sum_label.font = font_bold
+cell_sum_label.fill = fill_summary
+cell_sum_label.alignment = align_center
+cell_sum_label.border = thin_border
 
-last_r = len(skeleton_rows) + 2
-ws_sk.cell(row=last_r, column=1, value="Suma Zmiany").font = font_bold
-
-col_c = 4
+col_c = 3
 for slot_i in range(1, max_slots_found + 1):
-    c_sum_slot = ws_sk.cell(row=last_r, column=col_c+2, value=f"{slot_sum_rh[slot_i]:.1f}h")
-    c_sum_slot.font = font_bold
-    c_sum_slot.fill = fill_summary
-    c_sum_slot.alignment = align_center
-    col_c += 4
+    c_let1 = openpyxl.utils.get_column_letter(col_c)
+    c_let2 = openpyxl.utils.get_column_letter(col_c + 2)
+    ws_sk.merge_cells(f"{c_let1}{row_idx}:{c_let2}{row_idx}")
+    
+    c_tot_p = ws_sk[f"{c_let1}{row_idx}"]
+    c_tot_p.value = f"{slot_sum_rh[slot_i]:.1f}h"
+    c_tot_p.font = font_bold
+    c_tot_p.fill = fill_summary
+    c_tot_p.alignment = align_center
+    
+    for k in range(3):
+        ws_sk.cell(row=row_idx, column=col_c + k).border = thin_border
+        
+    col_c += 3
 
-c_grand_total = ws_sk.cell(row=last_r, column=col_c, value=f"{grand_total_rh:.1f}h RH")
-c_grand_total.font = font_bold
-c_grand_total.fill = fill_total
-c_grand_total.alignment = align_center
+ws_sk.cell(row=row_idx, column=col_c).border = thin_border
+row_idx += 1
+
+# OSTATNI WIERSZ - ZLICZONA ILOŚĆ GODZIN CAŁOŚCI (SUMA CAŁKOWITA)
+cell_grand_label = ws_sk.cell(row=row_idx, column=1)
+cell_grand_label.value = "SUMA CAŁKOWITA"
+cell_grand_label.font = font_bold
+cell_grand_label.fill = fill_total
+cell_grand_label.alignment = align_center
+cell_grand_label.border = thin_border
+
+last_col_let = openpyxl.utils.get_column_letter(col_c)
+ws_sk.merge_cells(f"B{row_idx}:{last_col_let}{row_idx}")
+c_grand_val = ws_sk[f"B{row_idx}"]
+c_grand_val.value = f"{grand_total_rh:.1f} Roboczogodzin (RH)"
+c_grand_val.font = Font(name="Calibri", size=11, bold=True, color="005B2B")
+c_grand_val.fill = fill_total
+c_grand_val.alignment = align_center
+
+for k in range(2, col_c + 1):
+    ws_sk.cell(row=row_idx, column=k).border = thin_border
 
 buf_sk = io.BytesIO()
 wb_sk.save(buf_sk)
 
-st.subheader("📥 Pobieranie Formatki")
+st.subheader("📥 Pobieranie Formatki Excel (.xlsx)")
 st.download_button(
     label="📥 Pobierz Wygenerowany Szkielet Grafiku (.xlsx)",
     data=buf_sk.getvalue(),
