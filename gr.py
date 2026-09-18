@@ -40,6 +40,7 @@ st.markdown(
         background-color: #FAFCF5;
     }
     
+    /* Panel Boczny */
     [data-testid="stSidebar"] {
         background-color: #005B2B !important;
     }
@@ -50,6 +51,14 @@ st.markdown(
         color: #8BC53F !important;
     }
     
+    /* Stylizacja elementów w panelu */
+    [data-testid="stSidebar"] input, [data-testid="stSidebar"] select, [data-testid="stSidebar"] div[data-baseweb="select"] {
+        color: #000000 !important;
+        background-color: #FFFFFF !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Przycisk Pobierania */
     div.stButton > button {
         background-color: #8BC53F !important;
         color: #005B2B !important;
@@ -84,7 +93,7 @@ MAPA_DNI = {
     "Sunday": "Niedziela",
 }
 
-# --- PANEL BOCZNY (SIDEBAR) - KONFIGURACJA WEJŚCIOWA ---
+# --- PANEL BOCZNY (SIDEBAR) ---
 with st.sidebar:
     st.image("https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=120)
     st.title("⚡ Konfiguracja DS")
@@ -97,9 +106,10 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("2. Wydajność Pickera")
-    cel_efektywnosci = st.number_input(
+    cel_efektywnosci = st.slider(
         "Zamówienia / h / picker:",
         min_value=1,
+        max_value=30,
         value=10,
         step=1,
     )
@@ -118,14 +128,13 @@ with st.sidebar:
         value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
     )
 
-# Wyznaczanie listy dni
 if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
     start_date, end_date = okres_grafiku
     dni_zakresu = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 else:
     dni_zakresu = [okres_grafiku[0]]
 
-# --- GŁÓWNA CZEŚĆ EKRANU ---
+# --- GŁÓWNA CZĘŚĆ EKRANU ---
 st.markdown(
     "<h1 style='margin-bottom:0; font-size: 2.2rem;'>żabka <span style='color:#8BC53F;'>jush!</span></h1>",
     unsafe_allow_html=True,
@@ -133,7 +142,6 @@ st.markdown(
 st.markdown("<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku (Shift Skeleton)</p>", unsafe_allow_html=True)
 st.divider()
 
-# Domyślne dane Lookera
 mock_looker_matrix = {
     "Wednesday": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
     "Thursday": {7: 6, 8: 8, 9: 9, 10: 12, 11: 8, 12: 11, 13: 14, 14: 13, 15: 14, 16: 15, 17: 14, 18: 17, 19: 25, 20: 23, 21: 18, 22: 10},
@@ -153,14 +161,10 @@ mock_looker_matrix = {
 
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
 
-if uploaded_file:
-    st.sidebar.success("⚡ Zrzut z danymi załadowany pomyślnie!")
-
 for d_name, h_dict in mock_looker_matrix.items():
     for h_val, val in h_dict.items():
         srednie_godzinowe[d_name][h_val] = float(val)
 
-# --- ALGORYTM GENEROWNIA SZKIELETU ---
 def format_time(h_float):
     h_int = int(h_float) % 24
     m_int = int(round((h_float - int(h_float)) * 60))
@@ -231,28 +235,18 @@ for d in dni_zakresu:
     for slot_idx, (s, e) in enumerate(day_shifts):
         dur = e - s
         sum_day_rh += dur
-        row_dict[f"Start {slot_idx+1}"] = format_time(s)
-        row_dict[f"Koniec {slot_idx+1}"] = format_time(e)
-        row_dict[f"RH {slot_idx+1}"] = f"{dur:.1f}h"
+        row_dict[f"Osoba {slot_idx+1} - Zmiana"] = f"{format_time(s)} - {format_time(e)}"
+        row_dict[f"Osoba {slot_idx+1} - Suma"] = f"{dur:.1f}h"
 
     row_dict["Suma Dnia (RH)"] = f"{sum_day_rh:.1f}h"
     skeleton_rows.append(row_dict)
 
 df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-rename_cols = {}
-for i in range(1, max_slots_found + 1):
-    rename_cols[f"Start {i}"] = f"Osoba {i} - Start"
-    rename_cols[f"Koniec {i}"] = f"Osoba {i} - Koniec"
-    rename_cols[f"RH {i}"] = f"Osoba {i} - Suma"
-
-df_skeleton_display = df_skeleton.rename(columns=rename_cols)
-
-# WYŚWIETLENIE WIZUALNE W GŁÓWNYM OKNIE
 st.subheader("📐 Wygenerowany Szkielet Grafiku (Osoba 1, Osoba 2...)")
-st.dataframe(df_skeleton_display, use_container_width=True, hide_index=True)
+st.dataframe(df_skeleton, use_container_width=True, hide_index=True)
 
-# EXCEL FORMOWANY
+# --- TWORZENIE FORMOWANEGO EXCELA (.XLSX) ---
 wb_sk = openpyxl.Workbook()
 ws_sk = wb_sk.active
 ws_sk.title = "Szkielet Grafiku"
@@ -267,8 +261,7 @@ font_header_main = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
 fill_header_sub = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
 font_header_sub = Font(name="Calibri", size=10, bold=True, color="005B2B")
 
-fill_start = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-fill_end = PatternFill(start_color="D9D2E9", end_color="D9D2E9", fill_type="solid")
+fill_shift = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 fill_sunday = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
 fill_summary = PatternFill(start_color="EBF7D4", end_color="EBF7D4", fill_type="solid")
 fill_total = PatternFill(start_color="8BC53F", end_color="8BC53F", fill_type="solid")
@@ -289,7 +282,7 @@ ws_sk["A1"].alignment = align_center
 col_idx = 3
 for i in range(1, max_slots_found + 1):
     c_start_let = openpyxl.utils.get_column_letter(col_idx)
-    c_end_let = openpyxl.utils.get_column_letter(col_idx + 2)
+    c_end_let = openpyxl.utils.get_column_letter(col_idx + 1)
     
     ws_sk.merge_cells(f"{c_start_let}1:{c_end_let}1")
     cell_p = ws_sk[f"{c_start_let}1"]
@@ -298,7 +291,7 @@ for i in range(1, max_slots_found + 1):
     cell_p.fill = fill_header_main
     cell_p.alignment = align_center
 
-    for j, sh in enumerate(["Start", "Koniec", "Suma"]):
+    for j, sh in enumerate(["Godziny Zmiany", "Suma"]):
         cell_sh = ws_sk.cell(row=2, column=col_idx + j)
         cell_sh.value = sh
         cell_sh.font = font_header_sub
@@ -306,7 +299,7 @@ for i in range(1, max_slots_found + 1):
         cell_sh.alignment = align_center
         cell_sh.border = thin_border
 
-    col_idx += 3
+    col_idx += 2
 
 ws_sk.merge_cells(f"{openpyxl.utils.get_column_letter(col_idx)}1:{openpyxl.utils.get_column_letter(col_idx)}2")
 c_sum_head = ws_sk.cell(row=1, column=col_idx)
@@ -335,31 +328,24 @@ for r_data in skeleton_rows:
     col_c = 3
     day_total = 0.0
     for slot_i in range(1, max_slots_found + 1):
-        s_val = r_data.get(f"Start {slot_i}", "-")
-        e_val = r_data.get(f"Koniec {slot_i}", "-")
-        rh_val = r_data.get(f"RH {slot_i}", "-")
+        z_val = r_data.get(f"Osoba {slot_i} - Zmiana", "-")
+        rh_val = r_data.get(f"Osoba {slot_i} - Suma", "-")
 
-        c_s = ws_sk.cell(row=row_idx, column=col_c)
-        c_e = ws_sk.cell(row=row_idx, column=col_c+1)
-        c_rh = ws_sk.cell(row=row_idx, column=col_c+2)
-
-        c_s.value = s_val
-        c_e.value = e_val
-        c_rh.value = rh_val
+        c_z = ws_sk.cell(row=row_idx, column=col_c, value=z_val)
+        c_rh = ws_sk.cell(row=row_idx, column=col_c+1, value=rh_val)
 
         if rh_val != "-":
-            c_s.fill = fill_start
-            c_e.fill = fill_end
+            c_z.fill = fill_shift
             val_h = float(rh_val.replace("h", ""))
             slot_sum_rh[slot_i] += val_h
             day_total += val_h
 
-        for c in [c_s, c_e, c_rh]:
+        for c in [c_z, c_rh]:
             c.font = font_bold if c == c_rh else font_regular
             c.alignment = align_center
             c.border = thin_border
 
-        col_c += 3
+        col_c += 2
 
     cell_day_total = ws_sk.cell(row=row_idx, column=col_c, value=f"{day_total:.1f}h")
     cell_day_total.font = font_bold
@@ -380,7 +366,7 @@ cell_sum_label.border = thin_border
 col_c = 3
 for slot_i in range(1, max_slots_found + 1):
     c_let1 = openpyxl.utils.get_column_letter(col_c)
-    c_let2 = openpyxl.utils.get_column_letter(col_c + 2)
+    c_let2 = openpyxl.utils.get_column_letter(col_c + 1)
     ws_sk.merge_cells(f"{c_let1}{row_idx}:{c_let2}{row_idx}")
     
     c_tot_p = ws_sk[f"{c_let1}{row_idx}"]
@@ -389,10 +375,10 @@ for slot_i in range(1, max_slots_found + 1):
     c_tot_p.fill = fill_summary
     c_tot_p.alignment = align_center
     
-    for k in range(3):
+    for k in range(2):
         ws_sk.cell(row=row_idx, column=col_c + k).border = thin_border
         
-    col_c += 3
+    col_c += 2
 
 ws_sk.cell(row=row_idx, column=col_c).border = thin_border
 row_idx += 1
