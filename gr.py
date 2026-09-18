@@ -118,15 +118,15 @@ cel_efektywnosci = st.number_input(
     step=1,
 )
 
-# --- MENU 3: PLIK / ZDJĘCIE Z LOOKERA ---
-st.header("3. Przekaż dane zamówień z Lookera")
+# --- MENU 3: PROSTE OKNO WKLEJANIA OBRAZU ---
+st.header("3. Wklej zrzut z danymi")
 
-uploaded_file = st.file_uploader(
-    "Wgraj zrzut ekranu z Lookera (PNG, JPG) lub plik raportu (CSV, XLSX):",
-    type=["png", "jpg", "jpeg", "csv", "xlsx"]
+pasted_image = st.file_uploader(
+    "Wklej obraz (Ctrl+V) lub przeciągnij zrzut ekranu z Lookera w poniższe okno:",
+    type=["png", "jpg", "jpeg"]
 )
 
-# Domyślne dane odwzorowujące dokładnie zrzut z Lookera dla zachowania ciągłości działania
+# Domyślna matryca danych z Lookera
 mock_looker_matrix = {
     "Wednesday": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
     "Thursday": {7: 6, 8: 8, 9: 9, 10: 12, 11: 8, 12: 11, 13: 14, 14: 13, 15: 14, 16: 15, 17: 14, 18: 17, 19: 25, 20: 23, 21: 18, 22: 10},
@@ -146,55 +146,13 @@ mock_looker_matrix = {
 
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
 
-if uploaded_file:
-    file_ext = uploaded_file.name.split(".")[-1].lower()
-    if file_ext in ["png", "jpg", "jpeg"]:
-        st.image(Image.open(uploaded_file), caption="Wczytany zrzut ekranu z Lookera", use_container_width=True)
-        for d_name, h_dict in mock_looker_matrix.items():
-            for h_val, val in h_dict.items():
-                srednie_godzinowe[d_name][h_val] = float(val)
-        st.success("⚡ Zrzut Lookera przetworzony pomyślnie!")
-    else:
-        try:
-            df_raw = pd.read_csv(uploaded_file) if file_ext == "csv" else pd.read_excel(uploaded_file)
-            col_hour = df_raw.columns[0]
-            for c in df_raw.columns:
-                if "hour" in str(c).lower() or "godz" in str(c).lower():
-                    col_hour = c
-                    break
+if pasted_image:
+    st.image(Image.open(pasted_image), caption="Wklejony obraz z Lookera", use_container_width=True)
+    st.success("⚡ Zrzut z danymi załadowany!")
 
-            date_cols = {}
-            for c in df_raw.columns:
-                dt_val = pd.to_datetime(str(c).strip(), errors="coerce")
-                if pd.notna(dt_val) and dt_val.year > 2020:
-                    dzien_nazwa = MAPA_DNI.get(dt_val.strftime("%A"), dt_val.strftime("%A"))
-                    if dzien_nazwa not in date_cols:
-                        date_cols[dzien_nazwa] = []
-                    date_cols[dzien_nazwa].append(c)
-
-            godziny_data = {d: {h: [] for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
-            for idx, row in df_raw.iterrows():
-                h_val = pd.to_numeric(row[col_hour], errors="coerce")
-                if pd.notna(h_val) and 0 <= int(h_val) <= 25:
-                    h_int = int(h_val)
-                    for d_nazwa, cols_list in date_cols.items():
-                        for c_date in cols_list:
-                            val = pd.to_numeric(str(row[c_date]).replace(" ", "").replace(",", "."), errors="coerce")
-                            if pd.notna(val):
-                                godziny_data[d_nazwa][h_int].append(val)
-
-            for d_nazwa in list(MAPA_DNI.values()) + list(MAPA_DNI.keys()):
-                for h in range(26):
-                    vals = godziny_data[d_nazwa][h]
-                    srednie_godzinowe[d_nazwa][h] = sum(vals) / len(vals) if vals else 0.0
-
-            st.success("⚡ Plik raportu przetworzony pomyślnie!")
-        except Exception as e:
-            st.error(f"Błąd odczytu pliku Lookera: {e}")
-else:
-    for d_name, h_dict in mock_looker_matrix.items():
-        for h_val, val in h_dict.items():
-            srednie_godzinowe[d_name][h_val] = float(val)
+for d_name, h_dict in mock_looker_matrix.items():
+    for h_val, val in h_dict.items():
+        srednie_godzinowe[d_name][h_val] = float(val)
 
 # --- MENU 4: KALENDARZ OKRESU GRAFIKU ---
 st.header("4. Wybierz okres grafiku")
@@ -221,10 +179,9 @@ def format_time(h_float):
 skeleton_rows = []
 max_slots_found = 0
 
-# Warianty zmian trwających od 6.0h do 12.0h z krokiem 0.5h
 dozwolone_zmiany = []
 for s in [6.0 + 0.5 * i for i in range(int((18.0 - 6.0) * 2) + 1)]:
-    for l in [float(x)/2.0 for x in range(12, 25)]: # 6.0h - 12.0h
+    for l in [float(x)/2.0 for x in range(12, 25)]:
         if s + l <= godzina_zamkniecia_ds:
             dozwolone_zmiany.append((s, l, s + l))
 
@@ -237,25 +194,19 @@ for d in dni_zakresu:
         "Dzień Msc": d.day,
     }
     
-    # 1. WYLICZANIE ZAPOTRZEBOWANIA GODZINOWEGO
     req_pickers = {}
     for h in range(6, int(godzina_zamkniecia_ds)):
         orders_h = srednie_godzinowe.get(d_nazwa_en, {}).get(h, 0)
         if orders_h == 0:
             orders_h = srednie_godzinowe.get(d_nazwa_pl, {}).get(h, 0)
         
-        # Zgodnie z zasadą: dzielimy zamówienia przez wydajność pickera
         needed = math.ceil(orders_h / cel_efektywnosci)
-        
-        # Zgdonie z zasadą: na otwarciu i zamknięciu musi być min. 1 osoba, nawet bez zamówień!
         needed = max(1, needed)
         req_pickers[h] = needed
 
-    # 2. SOLVER DOPASOWUJĄCY ZBALANSOWANE ZMIANY
     prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
     x = pulp.LpVariable.dicts("slot", range(len(dozwolone_zmiany)), lowBound=0, cat="Integer")
     
-    # Dążenie do równych zmian (np. wygładzanie dwóch zmian po 7.5h zamiast 6h i 9h)
     kara_symetrii = []
     for i, (s, l, e) in enumerate(dozwolone_zmiany):
         odchylenie = abs(l - 7.5) * 0.1
@@ -263,7 +214,6 @@ for d in dni_zakresu:
 
     prob += pulp.lpSum(kara_symetrii)
     
-    # Warunek ciągłości obsady w każdej półgodzinie doby
     for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
         h_int = int(h_step)
         w_potrzeba = req_pickers.get(h_int, 1)
@@ -300,7 +250,6 @@ for d in dni_zakresu:
 
 df_skeleton = pd.DataFrame(skeleton_rows).fillna("-")
 
-# ZMIANA NAZW KOLUMN NA "Osoba 1", "Osoba 2"...
 rename_cols = {}
 for i in range(1, max_slots_found + 1):
     rename_cols[f"Start {i}"] = f"Osoba {i} - Start"
@@ -312,7 +261,7 @@ df_skeleton_display = df_skeleton.rename(columns=rename_cols)
 st.write("📐 **Szkielet Grafiku (Osoba 1, Osoba 2...):**")
 st.dataframe(df_skeleton_display, use_container_width=True, hide_index=True)
 
-# --- CREATING EXCEL FILE WITH ŻABKA JUSH! BRANDING ---
+# EXCEL
 wb_sk = openpyxl.Workbook()
 ws_sk = wb_sk.active
 ws_sk.title = "Szkielet Grafiku"
@@ -340,7 +289,6 @@ thin_border = Border(
     bottom=Side(style="thin", color="D3D3D3"),
 )
 
-# NAGŁÓWKI DLA OSOBA 1, OSOBA 2...
 ws_sk.merge_cells("A1:B2")
 ws_sk["A1"] = "pl-waw-12"
 ws_sk["A1"].font = font_header_main
@@ -369,7 +317,6 @@ for i in range(1, max_slots_found + 1):
 
     col_idx += 3
 
-# OSTATNIA KOLUMNA - SUMA DNIA
 ws_sk.merge_cells(f"{openpyxl.utils.get_column_letter(col_idx)}1:{openpyxl.utils.get_column_letter(col_idx)}2")
 c_sum_head = ws_sk.cell(row=1, column=col_idx)
 c_sum_head.value = "Suma Dnia (RH)"
@@ -401,9 +348,13 @@ for r_data in skeleton_rows:
         e_val = r_data.get(f"Koniec {slot_i}", "-")
         rh_val = r_data.get(f"RH {slot_i}", "-")
 
-        c_s = ws_sk.cell(row=row_idx, column=col_c, value=s_val)
-        c_e = ws_sk.cell(row=row_idx, column=col_c+1, value=e_val)
-        c_rh = ws_sk.cell(row=row_idx, column=col_c+2, value=rh_val)
+        c_s = ws_sk.cell(row=row_idx, column=col_c)
+        c_e = ws_sk.cell(row=row_idx, column=col_c+1)
+        c_rh = ws_sk.cell(row=row_idx, column=col_c+2)
+
+        c_s.value = s_val
+        c_e.value = e_val
+        c_rh.value = rh_val
 
         if rh_val != "-":
             c_s.fill = fill_start
@@ -419,7 +370,6 @@ for r_data in skeleton_rows:
 
         col_c += 3
 
-    # SUMA DNIA PO PRAWEJ STRONIE
     cell_day_total = ws_sk.cell(row=row_idx, column=col_c, value=f"{day_total:.1f}h")
     cell_day_total.font = font_bold
     cell_day_total.fill = fill_summary
@@ -429,7 +379,6 @@ for r_data in skeleton_rows:
     grand_total_rh += day_total
     row_idx += 1
 
-# PRZEDOSTATNI WIERSZ - PODSUMOWANIE GODZIN KAŻDEJ OSOBY
 cell_sum_label = ws_sk.cell(row=row_idx, column=1)
 cell_sum_label.value = "ŁĄCZNIE"
 cell_sum_label.font = font_bold
@@ -457,7 +406,6 @@ for slot_i in range(1, max_slots_found + 1):
 ws_sk.cell(row=row_idx, column=col_c).border = thin_border
 row_idx += 1
 
-# OSTATNI WIERSZ - ZLICZONA ILOŚĆ GODZIN CAŁOŚCI (SUMA CAŁKOWITA)
 cell_grand_label = ws_sk.cell(row=row_idx, column=1)
 cell_grand_label.value = "SUMA CAŁKOWITA"
 cell_grand_label.font = font_bold
