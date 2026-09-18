@@ -26,7 +26,7 @@ try:
 except ImportError:
     st.error("❌ Brakuje biblioteki 'pulp'. Upewnij się, że znajduje się w requirements.txt!")
 
-# --- STYLIZACJA W PALECIE JUSH! ---
+# --- PEŁNA POPRAWKA WIDOCZNOŚCI TEKSTU I KONTRASTU W CSS ---
 st.markdown(
     """
     <style>
@@ -51,11 +51,15 @@ st.markdown(
         color: #8BC53F !important;
     }
     
-    /* Stylizacja elementów w panelu */
-    [data-testid="stSidebar"] input, [data-testid="stSidebar"] select, [data-testid="stSidebar"] div[data-baseweb="select"] {
+    /* Narzucenie czarnego tekstu we wszystkich polach edycyjnych */
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] select,
+    [data-testid="stSidebar"] div[data-baseweb="input"] {
         color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
         background-color: #FFFFFF !important;
         border-radius: 8px !important;
+        font-weight: bold !important;
     }
     
     /* Przycisk Pobierania */
@@ -123,16 +127,25 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("4. Okres Grafiku")
-    okres_grafiku = st.date_input(
-        "Zakres dat od - do:",
-        value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        date_from = st.date_input("Od:", value=datetime.now().date())
+    with col_d2:
+        date_to = st.date_input("Do:", value=datetime.now().date() + timedelta(days=29))
+
+    st.markdown(
+        f"""
+        <div style="background-color: #EBF7D4; color: #005B2B; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; margin-top: 10px;">
+            📅 {date_from.strftime('%d.%m.%Y')} — {date_to.strftime('%d.%m.%Y')}
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
-    start_date, end_date = okres_grafiku
-    dni_zakresu = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+if date_from <= date_to:
+    dni_zakresu = [date_from + timedelta(days=i) for i in range((date_to - date_from).days + 1)]
 else:
-    dni_zakresu = [okres_grafiku[0]]
+    dni_zakresu = [date_from]
 
 # --- GŁÓWNA CZĘŚĆ EKRANU ---
 st.markdown(
@@ -142,21 +155,22 @@ st.markdown(
 st.markdown("<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku (Shift Skeleton)</p>", unsafe_allow_html=True)
 st.divider()
 
+# MATRYCA Z PRECYZYJNYMI DANYMI ZE ZRZUTU EKRANU LOOKERA
 mock_looker_matrix = {
-    "Wednesday": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
-    "Thursday": {7: 6, 8: 8, 9: 9, 10: 12, 11: 8, 12: 11, 13: 14, 14: 13, 15: 14, 16: 15, 17: 14, 18: 17, 19: 25, 20: 23, 21: 18, 22: 10},
-    "Friday": {7: 8, 8: 8, 9: 10, 10: 12, 11: 12, 12: 11, 13: 11, 14: 14, 15: 15, 16: 16, 17: 16, 18: 22, 19: 23, 20: 21, 21: 21, 22: 10},
+    "Friday": {7: 7, 8: 12, 9: 13, 10: 16, 11: 20, 12: 21, 13: 17, 14: 17, 15: 20, 16: 22, 17: 26, 18: 31, 19: 38, 20: 33, 21: 31, 22: 10},
     "Saturday": {7: 7, 8: 12, 9: 16, 10: 24, 11: 23, 12: 20, 13: 26, 14: 20, 15: 23, 16: 24, 17: 27, 18: 33, 19: 31, 20: 31, 21: 25, 22: 9},
     "Sunday": {7: 9, 8: 15, 9: 24, 10: 24, 11: 35, 12: 37, 13: 31, 14: 33, 15: 33, 16: 33, 17: 34, 18: 39, 19: 33, 20: 39, 21: 25, 22: 12},
     "Monday": {7: 6, 8: 12, 9: 14, 10: 18, 11: 18, 12: 17, 13: 17, 14: 18, 15: 21, 16: 20, 17: 23, 18: 34, 19: 29, 20: 30, 21: 24, 22: 10},
     "Tuesday": {7: 4, 8: 10, 9: 11, 10: 16, 11: 18, 12: 15, 13: 17, 14: 17, 15: 20, 16: 21, 17: 26, 18: 32, 19: 39, 20: 30, 21: 26, 22: 9},
-    "Środa": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
-    "Czwartek": {7: 6, 8: 8, 9: 9, 10: 12, 11: 8, 12: 11, 13: 14, 14: 13, 15: 14, 16: 15, 17: 14, 18: 17, 19: 25, 20: 23, 21: 18, 22: 10},
-    "Piątek": {7: 8, 8: 8, 9: 10, 10: 12, 11: 12, 12: 11, 13: 11, 14: 14, 15: 15, 16: 16, 17: 16, 18: 22, 19: 23, 20: 21, 21: 21, 22: 10},
+    "Wednesday": {7: 6, 8: 11, 9: 14, 10: 15, 11: 18, 12: 17, 13: 18, 14: 16, 15: 19, 16: 23, 17: 28, 18: 29, 19: 31, 20: 39, 21: 20, 22: 9},
+    "Thursday": {7: 6, 8: 10, 9: 16, 10: 17, 11: 20, 12: 17, 13: 15, 14: 18, 15: 20, 16: 20, 17: 26, 18: 33, 19: 33, 20: 33, 21: 23, 22: 11},
+    "Piątek": {7: 7, 8: 12, 9: 13, 10: 16, 11: 20, 12: 21, 13: 17, 14: 17, 15: 20, 16: 22, 17: 26, 18: 31, 19: 38, 20: 33, 21: 31, 22: 10},
     "Sobota": {7: 7, 8: 12, 9: 16, 10: 24, 11: 23, 12: 20, 13: 26, 14: 20, 15: 23, 16: 24, 17: 27, 18: 33, 19: 31, 20: 31, 21: 25, 22: 9},
     "Niedziela": {7: 9, 8: 15, 9: 24, 10: 24, 11: 35, 12: 37, 13: 31, 14: 33, 15: 33, 16: 33, 17: 34, 18: 39, 19: 33, 20: 39, 21: 25, 22: 12},
     "Poniedziałek": {7: 6, 8: 12, 9: 14, 10: 18, 11: 18, 12: 17, 13: 17, 14: 18, 15: 21, 16: 20, 17: 23, 18: 34, 19: 29, 20: 30, 21: 24, 22: 10},
     "Wtorek": {7: 4, 8: 10, 9: 11, 10: 16, 11: 18, 12: 15, 13: 17, 14: 17, 15: 20, 16: 21, 17: 26, 18: 32, 19: 39, 20: 30, 21: 26, 22: 9},
+    "Środa": {7: 6, 8: 11, 9: 14, 10: 15, 11: 18, 12: 17, 13: 18, 14: 16, 15: 19, 16: 23, 17: 28, 18: 29, 19: 31, 20: 39, 21: 20, 22: 9},
+    "Czwartek": {7: 6, 8: 10, 9: 16, 10: 17, 11: 20, 12: 17, 13: 15, 14: 18, 15: 20, 16: 20, 17: 26, 18: 33, 19: 33, 20: 33, 21: 23, 22: 11},
 }
 
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
@@ -188,7 +202,6 @@ for d in dni_zakresu:
         "Dzień Msc": d.day,
     }
     
-    # Przeliczanie zapotrzebowania z uwzględnieniem faktu, że h oznacza przedział [h, h+1)
     req_pickers = {}
     for h in range(6, int(math.ceil(godzina_zamkniecia_ds))):
         orders_h = srednie_godzinowe.get(d_nazwa_en, {}).get(h, 0)
@@ -196,7 +209,7 @@ for d in dni_zakresu:
             orders_h = srednie_godzinowe.get(d_nazwa_pl, {}).get(h, 0)
         
         needed = math.ceil(orders_h / cel_efektywnosci)
-        needed = max(1, needed) # Minimum 1 picker na DS w dobie
+        needed = max(1, needed)
         req_pickers[h] = needed
 
     prob = pulp.LpProblem("Szkielet_DS", pulp.LpMinimize)
@@ -209,7 +222,6 @@ for d in dni_zakresu:
 
     prob += pulp.lpSum(kara_symetrii)
     
-    # Warunki pokrycia popytu w każdym półgodzinnym kroku doby
     for h_step in [6.0 + 0.5 * i for i in range(int((godzina_zamkniecia_ds - 6.0) * 2))]:
         h_int = int(h_step)
         w_potrzeba = req_pickers.get(h_int, 1)
