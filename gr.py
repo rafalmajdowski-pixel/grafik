@@ -6,7 +6,6 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import pulp
 import streamlit as st
-import streamlit.components.v1 as components
 from PIL import Image
 
 # --- KONFIGURACJA STRONY STREAMLIT ---
@@ -42,68 +41,38 @@ st.markdown(
     }
     
     [data-testid="stSidebar"] {
-        background-color: #8BC53F !important;
+        background-color: #005B2B !important;
     }
     [data-testid="stSidebar"] * {
-        color: #005B2B !important;
-        font-weight: bold !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #8BC53F !important;
     }
     
     div.stButton > button {
-        background-color: #005B2B !important;
-        color: #8BC53F !important;
+        background-color: #8BC53F !important;
+        color: #005B2B !important;
         font-weight: 800 !important;
         font-size: 16px !important;
-        border-radius: 12px !important;
+        border-radius: 10px !important;
         border: none !important;
-        padding: 10px 24px !important;
-        transition: all 0.2s ease !important;
+        padding: 12px 28px !important;
+        width: 100%;
     }
     div.stButton > button:hover {
-        background-color: #004420 !important;
-        color: #A3DF52 !important;
+        background-color: #A3DF52 !important;
+        color: #004420 !important;
     }
     
     h1, h2, h3 {
         color: #005B2B !important;
         font-family: 'Arial Black', sans-serif !important;
     }
-    
-    .paste-container {
-        border: 3px dashed #005B2B;
-        background-color: #EBF7D4;
-        padding: 30px;
-        border-radius: 15px;
-        text-align: center;
-        font-weight: bold;
-        color: #005B2B;
-        font-size: 1.2rem;
-        cursor: pointer;
-        margin-bottom: 10px;
-    }
     </style>
 """,
     unsafe_allow_html=True,
 )
-
-# --- BRANDING JUSH! - BANNER NAGŁÓWKA ---
-col_logo, col_title = st.columns([1, 4])
-with col_logo:
-    st.image(
-        "https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png",
-        width=140,
-    )
-with col_title:
-    st.markdown(
-        "<h1 style='margin-bottom:0; font-size: 2.6rem;'>żabka <span style='color:#005B2B;'>jush!</span></h1>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku DS</p>",
-        unsafe_allow_html=True,
-    )
-
-st.divider()
 
 MAPA_DNI = {
     "Monday": "Poniedziałek",
@@ -115,36 +84,56 @@ MAPA_DNI = {
     "Sunday": "Niedziela",
 }
 
-# --- MENU 1: TYP MAGAZYNU ---
-st.header("1. Wybierz typ magazynu DS")
-typ_magazynu = st.selectbox("Rodzaj magazynu:", ["Standardowy (06:00 - 23:30)", "Nocny (06:00 - 01:30)"])
-is_nocny = "Nocny" in typ_magazynu
+# --- PANEL BOCZNY (SIDEBAR) - KONFIGURACJA WEJŚCIOWA ---
+with st.sidebar:
+    st.image("https://zabkagroup.com/wp-content/uploads/2022/09/Jush_logo.png", width=120)
+    st.title("⚡ Konfiguracja DS")
+    
+    st.markdown("---")
+    st.subheader("1. Typ Magazynu")
+    typ_magazynu = st.selectbox("Wybierz tryb pracy:", ["Standardowy (06:00 - 23:30)", "Nocny (06:00 - 01:30)"])
+    is_nocny = "Nocny" in typ_magazynu
+    godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
 
-godzina_otwarcia_ds = 6.0
-godzina_zamkniecia_ds = 25.5 if is_nocny else 23.5
+    st.markdown("---")
+    st.subheader("2. Wydajność Pickera")
+    cel_efektywnosci = st.number_input(
+        "Zamówienia / h / picker:",
+        min_value=1,
+        value=10,
+        step=1,
+    )
 
-# --- MENU 2: WYDAJNOŚĆ PAKOWANIA PICKERA ---
-st.header("2. Szacowana wydajność pickera")
-cel_efektywnosci = st.number_input(
-    "Ile zamówień na godzinę średnio pakuje 1 picker na Twoim DS-ie?",
-    min_value=1,
-    value=10,
-    step=1,
-)
+    st.markdown("---")
+    st.subheader("3. Zrzut / Plik z Lookera")
+    uploaded_file = st.file_uploader(
+        "Przeciągnij lub wybierz zrzut Lookera (PNG, JPG, CSV):",
+        type=["png", "jpg", "jpeg", "csv", "xlsx"]
+    )
 
-# --- MENU 3: DEDYKOWANE OKNO WKLEJANIA OBRAZU (PASTE ZONE) ---
-st.header("3. Wklej zrzut z danymi")
+    st.markdown("---")
+    st.subheader("4. Okres Grafiku")
+    okres_grafiku = st.date_input(
+        "Zakres dat od - do:",
+        value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
+    )
 
+# Wyznaczanie listy dni
+if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
+    start_date, end_date = okres_grafiku
+    dni_zakresu = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+else:
+    dni_zakresu = [okres_grafiku[0]]
+
+# --- GŁÓWNA CZEŚĆ EKRANU ---
 st.markdown(
-    """
-    <div class="paste-container">
-        📋 KLIKNIJ TUTAJ I NACIŚNIJ CTRL+V (LUB CMD+V), ABY WKLEIĆ ZE SCHOWKA ZRZUT EKRANU
-    </div>
-    """,
+    "<h1 style='margin-bottom:0; font-size: 2.2rem;'>żabka <span style='color:#8BC53F;'>jush!</span></h1>",
     unsafe_allow_html=True,
 )
+st.markdown("<p style='font-weight:bold; color:#005B2B; font-size: 1.1rem;'>Generator Szkieletu Grafiku (Shift Skeleton)</p>", unsafe_allow_html=True)
+st.divider()
 
-# Domyślna matryca danych z Lookera
+# Domyślne dane Lookera
 mock_looker_matrix = {
     "Wednesday": {7: 7, 8: 8, 9: 10, 10: 10, 11: 12, 12: 9, 13: 15, 14: 14, 15: 14, 16: 13, 17: 16, 18: 21, 19: 19, 20: 26, 21: 18, 22: 8},
     "Thursday": {7: 6, 8: 8, 9: 9, 10: 12, 11: 8, 12: 11, 13: 14, 14: 13, 15: 14, 16: 15, 17: 14, 18: 17, 19: 25, 20: 23, 21: 18, 22: 10},
@@ -164,27 +153,14 @@ mock_looker_matrix = {
 
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
 
+if uploaded_file:
+    st.sidebar.success("⚡ Zrzut z danymi załadowany pomyślnie!")
+
 for d_name, h_dict in mock_looker_matrix.items():
     for h_val, val in h_dict.items():
         srednie_godzinowe[d_name][h_val] = float(val)
 
-# --- MENU 4: KALENDARZ OKRESU GRAFIKU ---
-st.header("4. Wybierz okres grafiku")
-okres_grafiku = st.date_input(
-    "Wskaż zakres dat od - do:",
-    value=(datetime.now().date(), datetime.now().date() + timedelta(days=29)),
-)
-
-if isinstance(okres_grafiku, tuple) and len(okres_grafiku) == 2:
-    start_date, end_date = okres_grafiku
-    dni_zakresu = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-else:
-    dni_zakresu = [okres_grafiku[0]]
-
-# --- 5. GENEROWANIE SZKIELETU GRAFIKU ---
-st.divider()
-st.header("5. Wygenerowany Szkielet Grafiku DS")
-
+# --- ALGORYTM GENEROWNIA SZKIELETU ---
 def format_time(h_float):
     h_int = int(h_float) % 24
     m_int = int(round((h_float - int(h_float)) * 60))
@@ -272,10 +248,11 @@ for i in range(1, max_slots_found + 1):
 
 df_skeleton_display = df_skeleton.rename(columns=rename_cols)
 
-st.write("📐 **Szkielet Grafiku (Osoba 1, Osoba 2...):**")
+# WYŚWIETLENIE WIZUALNE W GŁÓWNYM OKNIE
+st.subheader("📐 Wygenerowany Szkielet Grafiku (Osoba 1, Osoba 2...)")
 st.dataframe(df_skeleton_display, use_container_width=True, hide_index=True)
 
-# EXCEL
+# EXCEL FORMOWANY
 wb_sk = openpyxl.Workbook()
 ws_sk = wb_sk.active
 ws_sk.title = "Szkielet Grafiku"
@@ -441,9 +418,9 @@ for k in range(2, col_c + 1):
 buf_sk = io.BytesIO()
 wb_sk.save(buf_sk)
 
-st.subheader("📥 Pobieranie Formatki Excel (.xlsx)")
+st.markdown("---")
 st.download_button(
-    label="📥 Pobierz Wygenerowany Szkielet Grafiku (.xlsx)",
+    label="📥 Pobierz Gotowy Grafiku (.xlsx)",
     data=buf_sk.getvalue(),
     file_name="szkielet_grafiku_ds.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
