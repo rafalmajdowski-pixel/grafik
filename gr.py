@@ -6,6 +6,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 import pandas as pd
 import pulp
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 
 # --- KONFIGURACJA STRONY STREAMLIT ---
@@ -67,6 +68,19 @@ st.markdown(
         color: #005B2B !important;
         font-family: 'Arial Black', sans-serif !important;
     }
+    
+    .paste-container {
+        border: 3px dashed #005B2B;
+        background-color: #EBF7D4;
+        padding: 30px;
+        border-radius: 15px;
+        text-align: center;
+        font-weight: bold;
+        color: #005B2B;
+        font-size: 1.2rem;
+        cursor: pointer;
+        margin-bottom: 10px;
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -118,12 +132,16 @@ cel_efektywnosci = st.number_input(
     step=1,
 )
 
-# --- MENU 3: PROSTE OKNO WKLEJANIA OBRAZU ---
+# --- MENU 3: DEDYKOWANE OKNO WKLEJANIA OBRAZU (PASTE ZONE) ---
 st.header("3. Wklej zrzut z danymi")
 
-pasted_image = st.file_uploader(
-    "Wklej obraz (Ctrl+V) lub przeciągnij zrzut ekranu z Lookera w poniższe okno:",
-    type=["png", "jpg", "jpeg"]
+st.markdown(
+    """
+    <div class="paste-container">
+        📋 KLIKNIJ TUTAJ I NACIŚNIJ CTRL+V (LUB CMD+V), ABY WKLEIĆ ZE SCHOWKA ZRZUT EKRANU
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 # Domyślna matryca danych z Lookera
@@ -145,10 +163,6 @@ mock_looker_matrix = {
 }
 
 srednie_godzinowe = {d: {h: 0.0 for h in range(26)} for d in list(MAPA_DNI.values()) + list(MAPA_DNI.keys())}
-
-if pasted_image:
-    st.image(Image.open(pasted_image), caption="Wklejony obraz z Lookera", use_container_width=True)
-    st.success("⚡ Zrzut z danymi załadowany!")
 
 for d_name, h_dict in mock_looker_matrix.items():
     for h_val, val in h_dict.items():
